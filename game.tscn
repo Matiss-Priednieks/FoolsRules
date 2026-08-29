@@ -1,6 +1,10 @@
 [gd_scene format=3 uid="uid://ct3vu4eosia50"]
 
 [ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://game.gd" id="1_80nbo"]
+[ext_resource type="PackedScene" uid="uid://bs3fht0e3dn2t" path="res://card.tscn" id="2_e2o6t"]
 
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
+
+[node name="Sprite2D" parent="." unique_id=901492980 instance=ExtResource("2_e2o6t")]
+position = Vector2(561, 298)
