@@ -9,10 +9,13 @@ extends RefCounted
 ## Contract: the `card` inside an action must be the exact CardData instance
 ## returned by get_legal_actions() (identity matters, hands hold references).
 ##
+## The attacking side may lay down at most min(MAX_ATTACKS, defender's hand size
+## at the start of the bout) cards, whether the defender is beating them off or
+## taking. Overloading a taker past their hand size would be a deliberate
+## variant, not the default.
+##
 ## Known simplifications vs. full house rules:
 ##   - translation cannot bounce back onto the original attacker
-##   - a defender who is taking can be piled on up to MAX_ATTACKS regardless
-##     of their hand size
 
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)
@@ -35,6 +38,7 @@ var table: Array[Dictionary] = []  # [{attack: CardData, defense: CardData|null}
 var attacker: int                  # primary attacker (opens the bout, refills first)
 var defender: int
 var phase: int = Phase.ATTACK
+var attack_limit: int               # max cards on the table this bout; set when the bout/defender is set
 var passed: Dictionary = {}         # attacker index -> true, since the last table change
 
 var is_out: Array[bool] = []        # finished the game (empty hand, empty talon)
@@ -163,6 +167,11 @@ func _build_and_deal() -> void:
 
 	attacker = _find_first_attacker()
 	defender = _next_active(attacker)
+	_set_attack_limit()
+
+
+func _set_attack_limit() -> void:
+	attack_limit = mini(MAX_ATTACKS, hands[defender].size())
 
 
 func _shuffle(arr: Array) -> void:
@@ -221,11 +230,7 @@ func _table_ranks() -> Array:
 func _can_add_attack(player: int) -> bool:
 	if hands[player].is_empty():
 		return false
-	if table.size() >= MAX_ATTACKS:
-		return false
-	if phase == Phase.TAKING:
-		return true
-	return _unbeaten_count() < hands[defender].size()
+	return table.size() < attack_limit
 
 
 func _can_translate() -> bool:
@@ -271,6 +276,7 @@ func _apply_translate(player: int, card: CardData) -> void:
 	hands[player].erase(card)
 	table.append({attack = card, defense = null})
 	defender = _next_active(defender)  # old defender is now just an attacker
+	_set_attack_limit()               # cap now follows the new defender's hand
 	passed.clear()
 	state_changed.emit()
 
@@ -340,6 +346,7 @@ func _resolve_bout(defender_took: bool) -> void:
 		next_attacker = _next_active(next_attacker)
 	attacker = next_attacker
 	defender = _next_active(attacker)
+	_set_attack_limit()
 	phase = Phase.ATTACK
 	state_changed.emit()
 
