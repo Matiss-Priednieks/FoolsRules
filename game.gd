@@ -39,6 +39,11 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(40.0, 320.0, 1.0) var opponent_card_height := 118.0
 @export_range(40.0, 320.0, 1.0) var discard_card_height := 130.0
 
+@export_group("Audio")
+@export var sfx_enabled := true
+@export_range(-40.0, 6.0, 0.5) var sfx_volume_db := -6.0
+@export_range(0.0, 0.20, 0.005) var deal_stagger := 0.05 ## gap between clicks when several cards move at once
+
 @export_group("CRT")
 @export var crt_enabled := true:
 	set(value):
@@ -99,12 +104,21 @@ var _drag := {}                   # {view, card, home_pos, grab_offset} while dr
 var _hovered_view: Node = null
 var _headless := false
 
+# --- audio ----------------------------------------------------------------
+const AUDIO_VOICES := 14
+var _deal_streams: Array[AudioStream] = []  # deal_1..9: one card moving
+var _fan_streams: Array[AudioStream] = []   # card_fan_1..3: a pile picked up / swept to discard
+var _voices: Array[AudioStreamPlayer] = []
+var _voice_next := 0
+
 
 func _ready() -> void:
 	_headless = DisplayServer.get_name() == "headless"
 	if _headless:
 		bot_delay = 0.0
 		human_seat = -1 # let the headless smoke test self-play
+	else:
+		_init_audio()
 
 	var crt := get_node_or_null("CRT")
 	if crt:
@@ -255,6 +269,7 @@ func _new_game() -> void:
 	game = DurakGame.new(4, 0)
 	game.game_over.connect(_on_game_over)
 	_resync() # deal: every view spawns at the talon and fans out to its hand
+	_deal_burst(12) # rattle of the opening deal
 	_run_bot_turns()
 
 
@@ -398,11 +413,13 @@ func _apply_and_animate(action: Dictionary) -> void:
 		view.z_index = slot.z
 		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, table_card_height), play_anim, 0.0)
 	if not played.is_empty():
+		_deal_burst(played.size())
 		await _wait(play_beat)
 		if run_id != _game_id: return
 
 	# 2. clear the table
 	if not discarded.is_empty():
+		_play_fan()
 		for card in discarded:
 			_animate_view_away(card)
 		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
@@ -410,6 +427,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 		await _wait(clear_beat)
 		if run_id != _game_id: return
 	elif not taken.is_empty():
+		_play_fan()
 		if taker == human_seat:
 			for card in taken:
 				var view: Sprite2D = _card_views.get(card)
@@ -432,6 +450,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 				_draw_into_hand(seat)
 			else:
 				_grow_opponent_backs(seat)
+			_deal_burst(refilled[seat].size())
 			_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
 				talon_pos, talon_card_height, -1)
 			await _wait(refill_beat)
@@ -448,6 +467,56 @@ func _wait(seconds: float) -> void:
 		await get_tree().process_frame
 	else:
 		await get_tree().create_timer(seconds).timeout
+
+
+# ---------------------------------------------------------------- audio
+
+func _init_audio() -> void:
+	for i in range(1, 10):
+		_deal_streams.append(load("res://audio/deal_%d.mp3" % i))
+	for i in range(1, 4):
+		_fan_streams.append(load("res://audio/card_fan_%d.mp3" % i))
+	for _v in AUDIO_VOICES:
+		var voice := AudioStreamPlayer.new()
+		add_child(voice)
+		_voices.append(voice)
+
+
+func _play_stream(streams: Array[AudioStream], trim_db: float) -> void:
+	if _headless or not sfx_enabled or streams.is_empty():
+		return
+	var voice := _voices[_voice_next]
+	_voice_next = (_voice_next + 1) % _voices.size()
+	voice.stream = streams[randi() % streams.size()]
+	voice.volume_db = sfx_volume_db + trim_db
+	voice.pitch_scale = randf_range(0.94, 1.06)
+	voice.play()
+
+
+## One card moved (played, drawn). Call once per card; for a group that moves
+## together, `_deal_burst` spreads the clicks out.
+func _play_deal() -> void:
+	_play_stream(_deal_streams, 0.0)
+
+
+## A whole pile moved at once - the defender picks the table up, or a beaten
+## bout is swept to the discard.
+func _play_fan() -> void:
+	_play_stream(_fan_streams, 2.0)
+
+
+## Fire-and-forget: `count` deal clicks, one every `deal_stagger` seconds, so a
+## six-card refill from the talon rattles out instead of cracking as one sound.
+func _deal_burst(count: int) -> void:
+	if _headless or not sfx_enabled or count <= 0:
+		return
+	var n := mini(count, 12)
+	for i in n:
+		if not is_inside_tree():
+			return
+		_play_deal()
+		if i < n - 1:
+			await get_tree().create_timer(deal_stagger + randf() * 0.02).timeout
 
 
 func _zone_seat(zone: String) -> int:
