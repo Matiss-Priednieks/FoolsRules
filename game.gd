@@ -28,6 +28,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_group("Card feel")
 @export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
 @export_range(1.0, 1.6, 0.01) var hover_scale := 1.12  ## size multiplier while hovered
+@export_range(0.0, 25.0, 0.5) var hover_tilt := 8.0    ## deg a hovered card leans toward the cursor (Balatro-ish)
 @export_range(0.05, 1.0, 0.01) var hand_follow := 0.30 ## how fast hand cards ease to their slot
 @export_range(0.05, 1.0, 0.01) var drag_follow := 0.40 ## how fast a dragged card chases the cursor
 
@@ -318,7 +319,9 @@ func _deal_out() -> void:
 				_opponent_backs.get_or_add(seat, [])
 				var back := _new_back(talon_pos, 4)
 				_opponent_backs[seat].append(back)
-				_animate_to(back, _opponent_slot_pos(seat, i, hand.size()), 0.0,
+				# spawns upright at the talon, then turns to face its seat mid-flight
+				_animate_to(back, _opponent_slot_pos(seat, i, hand.size()),
+					_seat_layout(seat).facing,
 					_fit_scale(back, opponent_card_height), deal_fly, 0.0)
 			_play_deal()
 			await _wait(deal_gap)
@@ -639,10 +642,11 @@ func _grow_opponent_backs(seat: int) -> void:
 		_opponent_backs[seat] = []
 	var backs: Array = _opponent_backs[seat]
 	var wanted: int = game.hands[seat].size()
+	var facing: float = _seat_layout(seat).facing
 	while backs.size() < wanted:
 		backs.append(_new_back(talon_pos, 4))
 	for i in backs.size():
-		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), 0.0,
+		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), facing,
 			_fit_scale(backs[i], opponent_card_height), refill_anim, 0.0)
 
 
@@ -824,7 +828,11 @@ func _process(_delta: float) -> void:
 		# lift perpendicular to the fan so a tilted card rises straight off the arc
 		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
 		var goal: Vector2 = slot.home_pos + (lift if raised else Vector2.ZERO)
-		var target_angle: float = 0.0 if raised else slot.home_angle
+		# hovered: lean toward the cursor (Balatro-style); otherwise rest on the fan arc
+		var target_angle: float = slot.home_angle
+		if raised:
+			var lean := clampf((mouse.x - view.global_position.x) / 110.0, -1.0, 1.0)
+			target_angle = deg_to_rad(hover_tilt) * lean
 		view.global_position = view.global_position.lerp(goal, hand_follow)
 		view.scale = view.scale.lerp(
 			slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
@@ -850,13 +858,15 @@ func _near_seat() -> int:
 
 
 func _seat_layout(seat: int) -> Dictionary:
-	# where this seat's cards sit, whether the fan is vertical, and its label offset
+	# origin: where this seat's cards sit. vertical: the back row runs down, not
+	# across. facing: the angle the seat's cards rest at - the side seats hold
+	# theirs sideways, turned to look towards that player.
 	var relative := (seat - _near_seat() + game.num_players) % game.num_players
 	match relative:
-		0: return {origin = Vector2(960, 965), vertical = false, label_offset = Vector2(-45, -150)}
-		1: return {origin = Vector2(140, 540), vertical = true, label_offset = Vector2(-40, -170)}
-		2: return {origin = Vector2(960, 120), vertical = false, label_offset = Vector2(-45, 90)}
-		_: return {origin = Vector2(1780, 540), vertical = true, label_offset = Vector2(-40, -170)}
+		0: return {origin = Vector2(960, 965), vertical = false, facing = 0.0, label_offset = Vector2(-45, -150)}
+		1: return {origin = Vector2(150, 540), vertical = true, facing = -PI / 2.0, label_offset = Vector2(-40, -170)}
+		2: return {origin = Vector2(960, 120), vertical = false, facing = 0.0, label_offset = Vector2(-45, 90)}
+		_: return {origin = Vector2(1770, 540), vertical = true, facing = PI / 2.0, label_offset = Vector2(-40, -170)}
 
 
 # The human hand is a fan: cards ride a circle of radius `hand_fan_radius`
@@ -1006,17 +1016,20 @@ func _animate_view_away(card: CardData) -> void:
 		return # a card that briefly passed through the table without ever rendering
 	_card_views.erase(card)
 	var destination := talon_pos
+	var destination_angle := 0.0
 	if card in game.discard:
 		destination = discard_pos
 	else:
 		for seat in game.num_players:
 			if seat != _near_seat() and card in game.hands[seat]:
 				destination = _seat_layout(seat).origin
+				destination_angle = _seat_layout(seat).facing
 				break
 	_stop_tween(view)
 	var tween := create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.tween_property(view, "position", destination, clear_anim)
+	tween.tween_property(view, "rotation", destination_angle, clear_anim)
 	tween.tween_property(view, "scale", view.scale * 0.6, clear_anim)
 	tween.tween_property(view, "modulate:a", 0.0, clear_anim)
 	tween.chain().tween_callback(view.queue_free)
