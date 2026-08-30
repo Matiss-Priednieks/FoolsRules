@@ -542,9 +542,10 @@ func _submit(action: Dictionary) -> void:
 	_run_bot_turns()
 
 
-## Lay one card down but keep the turn on the human's side: the bots don't move
-## until _on_confirm(). Cards already on the table can't be taken back - they're
-## in game.table now, so _rebuild_input_targets() never re-lists them as draggable.
+## Lay one attack card down but keep the turn on the human's side: the bots
+## don't move until _on_confirm(), so you can throw several same-rank cards in
+## one go. A card on the table can't be taken back - it lives in game.table, so
+## _rebuild_input_targets() never re-lists it as draggable.
 func _play_local(action: Dictionary) -> void:
 	if _busy:
 		return
@@ -628,13 +629,15 @@ func _end_drag() -> void:
 	var mouse := get_global_mouse_position()
 	var actions := _human_actions()
 
-	# 1. dropped onto a specific unbeaten attack -> defend it
+	# 1. dropped onto a specific unbeaten attack -> defend it.
+	# Defence commits straight away: it is one card per attack, and the bout
+	# needs the bots to answer between beats.
 	for open_attack in _open_attack_views:
 		if _view_rect(open_attack.view).grow(14).has_point(mouse):
 			for action in actions:
 				if action.type == "defend" and action.card == _drag.card \
 						and action.target == open_attack.table_index:
-					_play_local(action)
+					_submit(action)
 					return
 
 	# 2. dropped on the translate strip -> pass the attack on
@@ -1041,12 +1044,9 @@ func _update_buttons() -> void:
 	var actions := _human_actions()
 	var offered := func(action_type: String) -> bool:
 		return actions.any(func(action): return action.type == action_type)
-	# "Confirm" ends the staged move and lets the bots run. For an attacker it
-	# stands in for "Pass"; for the defender it only makes sense once every
-	# attack is beaten (otherwise their real choice is still defend / take).
-	var human_is_defender: bool = human_seat == game.defender
-	_confirm_button.visible = _move_pending and not game.is_finished() \
-		and (not human_is_defender or _unbeaten_count() == 0)
+	# "Confirm" ends a staged attack and lets the bots run - it stands in for
+	# "Pass" (only the attacking side stages, so a pass is always what's meant).
+	_confirm_button.visible = _move_pending and not game.is_finished()
 	_pass_button.visible = offered.call("pass") and not _move_pending
 	_take_button.visible = offered.call("take") \
 		and (game.phase == DurakGame.Phase.TAKING or _unbeaten_count() > 0)
