@@ -47,12 +47,13 @@ func _play_random_game(game_seed: int) -> Dictionary:
 			return {ok = false, steps = steps,
 				msg = "no legal action, phase=%d, not finished" % game.phase}
 
-		# bug signature: everything is beaten but the only move is the defender
-		# taking their own completed defense (attackers can't pass / throw in)
-		var only_self_take := legal.all(func(action): return action.type == "take")
-		if only_self_take and _unbeaten_count(game) == 0:
-			return {ok = false, steps = steps,
-				msg = "defender forced to take a fully-beaten table"}
+		# bug signature: "take" must never be offered once every attack is beaten -
+		# there is nothing to take, and a bot with the human filtered out would
+		# grab a completed defence instead of letting the bout resolve to discard
+		for action in legal:
+			if action.type == "take" and _unbeaten_count(game) == 0:
+				return {ok = false, steps = steps,
+					msg = "take offered on a fully-beaten table"}
 
 		var action: Dictionary = legal[randi() % legal.size()]
 		if not game.apply_action(action):

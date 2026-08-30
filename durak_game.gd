@@ -76,7 +76,10 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 				for card in hands[seat]:
 					if card.rank == lead_rank:
 						actions.append({type = "translate", player = seat, card = card})
-			actions.append({type = "take", player = seat})
+			# "take" only means something while a card is still unbeaten; once the
+			# defence is complete the bout just waits for the attackers to pass
+			if _unbeaten_count() > 0:
+				actions.append({type = "take", player = seat})
 		return actions
 
 	# attacking side: everyone who is not the defender
