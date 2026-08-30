@@ -72,6 +72,7 @@ var _ui_layer: CanvasLayer
 var _status_label: Label         # top line: trump / phase / pile counts
 var _take_button: Button
 var _pass_button: Button
+var _confirm_button: Button
 var _translate_strip: ColorRect  # "drop here to pass the attack on"
 var _talon_label: Label
 var _discard_label: Label
@@ -91,6 +92,7 @@ var _game_id := 0                 # bumped per game; a stale coroutine bails on 
 var _turn_epoch := 0             # bumped when the human acts; the bot loop bails on mismatch
 var _busy := false                # an _apply_and_animate() is mid-flight
 var _waiting_for_human := false   # the human has at least one legal move right now
+var _move_pending := false        # human has laid ≥1 card this turn, not yet released to the bots
 var _hand_slots: Array = []       # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _drag := {}                   # {view, card, home_pos, grab_offset} while dragging
@@ -129,6 +131,7 @@ func _ready() -> void:
 	for _i in 4:
 		_seat_labels.append(_make_label(Vector2.ZERO, 18))
 
+	_confirm_button = _make_button("Confirm", Vector2(1520, 610), _on_confirm)
 	_take_button = _make_button("Take", Vector2(1520, 690), _on_take)
 	_pass_button = _make_button("Pass", Vector2(1520, 770), _on_pass)
 
@@ -248,6 +251,7 @@ func _new_game() -> void:
 	_game_id += 1
 	_turn_epoch += 1
 	_busy = false
+	_move_pending = false
 	game = DurakGame.new(4, 0)
 	game.game_over.connect(_on_game_over)
 	_resync() # deal: every view spawns at the talon and fans out to its hand
@@ -533,8 +537,42 @@ func _submit(action: Dictionary) -> void:
 	_turn_epoch += 1 # pre-empt the bot loop so it doesn't act on top of us
 	_drag = {}
 	_hovered_view = null
+	_move_pending = false
 	await _apply_and_animate(action)
 	_run_bot_turns()
+
+
+## Lay one card down but keep the turn on the human's side: the bots don't move
+## until _on_confirm(). Cards already on the table can't be taken back - they're
+## in game.table now, so _rebuild_input_targets() never re-lists them as draggable.
+func _play_local(action: Dictionary) -> void:
+	if _busy:
+		return
+	_turn_epoch += 1
+	_drag = {}
+	_hovered_view = null
+	await _apply_and_animate(action)
+	_move_pending = true
+	if _human_actions().is_empty():
+		_release_to_bots() # nothing left to add - hand over on its own
+
+
+## End the human's staged move and let the bots run. A non-defender attacker
+## must formally "pass", or the engine keeps the bout open waiting on them.
+func _release_to_bots() -> void:
+	_move_pending = false
+	if game != null and not game.is_finished():
+		for action in _human_actions():
+			if action.type == "pass":
+				await _apply_and_animate(action)
+				break
+	_run_bot_turns()
+
+
+func _on_confirm() -> void:
+	if _busy or not _move_pending:
+		return
+	_release_to_bots()
 
 
 func _on_take() -> void:
@@ -596,7 +634,7 @@ func _end_drag() -> void:
 			for action in actions:
 				if action.type == "defend" and action.card == _drag.card \
 						and action.target == open_attack.table_index:
-					_submit(action)
+					_play_local(action)
 					return
 
 	# 2. dropped on the translate strip -> pass the attack on
@@ -610,7 +648,7 @@ func _end_drag() -> void:
 	if table_drop_rect.has_point(mouse):
 		for action in actions:
 			if action.type == "attack" and action.card == _drag.card:
-				_submit(action)
+				_play_local(action)
 				return
 
 	# 4. no valid target -> let _process glide the card home
@@ -1003,7 +1041,13 @@ func _update_buttons() -> void:
 	var actions := _human_actions()
 	var offered := func(action_type: String) -> bool:
 		return actions.any(func(action): return action.type == action_type)
-	_pass_button.visible = offered.call("pass")
+	# "Confirm" ends the staged move and lets the bots run. For an attacker it
+	# stands in for "Pass"; for the defender it only makes sense once every
+	# attack is beaten (otherwise their real choice is still defend / take).
+	var human_is_defender: bool = human_seat == game.defender
+	_confirm_button.visible = _move_pending and not game.is_finished() \
+		and (not human_is_defender or _unbeaten_count() == 0)
+	_pass_button.visible = offered.call("pass") and not _move_pending
 	_take_button.visible = offered.call("take") \
 		and (game.phase == DurakGame.Phase.TAKING or _unbeaten_count() > 0)
 	_translate_strip.visible = offered.call("translate")
