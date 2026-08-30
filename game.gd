@@ -8,31 +8,38 @@ extends Node2D
 
 const CARD_SCENE := preload("res://card.tscn")
 const SUIT_GLYPHS := ["♣", "♦", "♥", "♠"]
-
 const BOARD_CENTER := Vector2(960, 540)
-const HAND_CARD_HEIGHT := 200.0
-const TABLE_CARD_HEIGHT := 140.0
-const TALON_CARD_HEIGHT := 140.0
-const OPPONENT_CARD_HEIGHT := 118.0
-const DISCARD_CARD_HEIGHT := 130.0
-const MOVE_DURATION := 0.34
 
-# animation pacing: <thing>_ANIM is the tween length, <thing>_BEAT is how long
-# the turn loop pauses on that phase before moving on
-const PLAY_ANIM := 0.30
-const PLAY_BEAT := 0.34
-const CLEAR_ANIM := 0.46
-const CLEAR_BEAT := 0.58
-const REFILL_ANIM := 0.28
-const REFILL_BEAT := 0.24
+@export var human_seat := 0 ## -1 = watch mode (every seat is a bot)
 
-const TALON_POS := Vector2(250, 560)
-const DISCARD_POS := Vector2(1690, 560)
-const TABLE_DROP_RECT := Rect2(500, 350, 920, 380)
-const TRANSLATE_STRIP_RECT := Rect2(660, 232, 600, 96)
+@export_group("Pacing (seconds)")
+@export_range(0.0, 3.0, 0.05) var bot_delay := 0.7  ## pause before each bot move; the board stays live during it
+@export_range(0.0, 1.5, 0.01) var move_duration := 0.34 ## generic settle tween
+@export_range(0.0, 1.5, 0.01) var play_anim := 0.30    ## played card sliding onto the table
+@export_range(0.0, 1.5, 0.01) var play_beat := 0.34    ## hold after a card is played
+@export_range(0.0, 1.5, 0.01) var clear_anim := 0.46   ## cards leaving the table (to discard / into a hand)
+@export_range(0.0, 1.5, 0.01) var clear_beat := 0.58   ## hold after the table clears
+@export_range(0.0, 1.5, 0.01) var refill_anim := 0.28  ## a card flying from the talon into a hand
+@export_range(0.0, 1.5, 0.01) var refill_beat := 0.24  ## hold after each seat refills
 
-@export var bot_delay := 0.7
-@export var human_seat := 0 # -1 = watch mode (every seat is a bot)
+@export_group("Card feel")
+@export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
+@export_range(1.0, 1.6, 0.01) var hover_scale := 1.12  ## size multiplier while hovered
+@export_range(0.05, 1.0, 0.01) var hand_follow := 0.30 ## how fast hand cards ease to their slot
+@export_range(0.05, 1.0, 0.01) var drag_follow := 0.40 ## how fast a dragged card chases the cursor
+
+@export_group("Card sizes (px tall)")
+@export_range(40.0, 320.0, 1.0) var hand_card_height := 200.0
+@export_range(40.0, 320.0, 1.0) var table_card_height := 140.0
+@export_range(40.0, 320.0, 1.0) var talon_card_height := 140.0
+@export_range(40.0, 320.0, 1.0) var opponent_card_height := 118.0
+@export_range(40.0, 320.0, 1.0) var discard_card_height := 130.0
+
+@export_group("Positions")
+@export var talon_pos := Vector2(250, 560)
+@export var discard_pos := Vector2(1690, 560)
+@export var table_drop_rect := Rect2(500, 350, 920, 380) ## where a dragged card counts as "on the table"
+@export var translate_strip_rect := Rect2(660, 232, 600, 96) ## the "pass the attack on" drop strip
 
 var game: DurakGame
 
@@ -80,8 +87,8 @@ func _ready() -> void:
 	add_child(_ui_layer)
 
 	_status_label = _make_label(Vector2(24, 18), 22)
-	_talon_label = _make_label(TALON_POS + Vector2(-40, 96), 18)
-	_discard_label = _make_label(DISCARD_POS + Vector2(-40, 96), 18)
+	_talon_label = _make_label(talon_pos + Vector2(-40, 96), 18)
+	_discard_label = _make_label(discard_pos + Vector2(-40, 96), 18)
 	for _i in 4:
 		_seat_labels.append(_make_label(Vector2.ZERO, 18))
 
@@ -90,13 +97,13 @@ func _ready() -> void:
 
 	_translate_strip = ColorRect.new()
 	_translate_strip.color = Color(0.9, 0.75, 0.2, 0.22)
-	_translate_strip.position = TRANSLATE_STRIP_RECT.position
-	_translate_strip.size = TRANSLATE_STRIP_RECT.size
+	_translate_strip.position = translate_strip_rect.position
+	_translate_strip.size = translate_strip_rect.size
 	_translate_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_translate_strip.visible = false
 	var strip_label := Label.new()
 	strip_label.text = "▲  drop here — pass the attack on"
-	strip_label.size = TRANSLATE_STRIP_RECT.size
+	strip_label.size = translate_strip_rect.size
 	strip_label.add_theme_font_size_override("font_size", 20)
 	strip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	strip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -314,9 +321,9 @@ func _apply_and_animate(action: Dictionary) -> void:
 			if origin_seat >= 0:
 				view.position = _seat_layout(origin_seat).origin
 		var slot := _table_target_for(card)
-		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, TABLE_CARD_HEIGHT), PLAY_ANIM, 0.0)
+		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, table_card_height), play_anim, 0.0)
 	if not played.is_empty():
-		await _wait(PLAY_BEAT)
+		await _wait(play_beat)
 		if run_id != _game_id: return
 
 	# 2. clear the table
@@ -324,8 +331,8 @@ func _apply_and_animate(action: Dictionary) -> void:
 		for card in discarded:
 			_animate_view_away(card)
 		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
-			DISCARD_POS, DISCARD_CARD_HEIGHT, 1)
-		await _wait(CLEAR_BEAT)
+			discard_pos, discard_card_height, 1)
+		await _wait(clear_beat)
 		if run_id != _game_id: return
 	elif not taken.is_empty():
 		if taker == human_seat:
@@ -333,12 +340,12 @@ func _apply_and_animate(action: Dictionary) -> void:
 				var view: Sprite2D = _card_views.get(card)
 				if view != null:
 					_animate_to(view, _seat_layout(human_seat).origin, 0.0,
-						_fit_scale(view, HAND_CARD_HEIGHT), CLEAR_ANIM, 0.0)
+						_fit_scale(view, hand_card_height), clear_anim, 0.0)
 		else:
 			for card in taken:
 				_animate_view_away(card)
 			_grow_opponent_backs(taker)
-		await _wait(CLEAR_BEAT)
+		await _wait(clear_beat)
 		if run_id != _game_id: return
 
 	# 3. refill from the talon, one seat at a time, in the engine's refill order
@@ -351,8 +358,8 @@ func _apply_and_animate(action: Dictionary) -> void:
 			else:
 				_grow_opponent_backs(seat)
 			_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
-				TALON_POS, TALON_CARD_HEIGHT, -1)
-			await _wait(REFILL_BEAT)
+				talon_pos, talon_card_height, -1)
+			await _wait(refill_beat)
 			if run_id != _game_id: return
 
 	_busy = false
@@ -420,7 +427,7 @@ func _draw_into_hand(seat: int) -> void:
 		var view := _create_view(card) # spawns at the talon
 		_card_views[card] = view
 		_animate_to(view, _hand_slot_pos(i, hand.size()), 0.0,
-			_fit_scale(view, HAND_CARD_HEIGHT), REFILL_ANIM, i * 0.04)
+			_fit_scale(view, hand_card_height), refill_anim, i * 0.04)
 
 
 func _grow_opponent_backs(seat: int) -> void:
@@ -431,10 +438,10 @@ func _grow_opponent_backs(seat: int) -> void:
 	var backs: Array = _opponent_backs[seat]
 	var wanted: int = game.hands[seat].size()
 	while backs.size() < wanted:
-		backs.append(_new_back(TALON_POS, 4))
+		backs.append(_new_back(talon_pos, 4))
 	for i in backs.size():
 		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), 0.0,
-			_fit_scale(backs[i], OPPONENT_CARD_HEIGHT), REFILL_ANIM, 0.0)
+			_fit_scale(backs[i], opponent_card_height), refill_anim, 0.0)
 
 
 func _fit_scale(view: Sprite2D, target_height: float) -> Vector2:
@@ -522,14 +529,14 @@ func _end_drag() -> void:
 					return
 
 	# 2. dropped on the translate strip -> pass the attack on
-	if _translate_strip.visible and TRANSLATE_STRIP_RECT.has_point(mouse):
+	if _translate_strip.visible and translate_strip_rect.has_point(mouse):
 		for action in actions:
 			if action.type == "translate" and action.card == _drag.card:
 				_submit(action)
 				return
 
 	# 3. dropped anywhere on the table -> attack / throw in
-	if TABLE_DROP_RECT.has_point(mouse):
+	if table_drop_rect.has_point(mouse):
 		for action in actions:
 			if action.type == "attack" and action.card == _drag.card:
 				_submit(action)
@@ -551,7 +558,7 @@ func _process(_delta: float) -> void:
 		if is_instance_valid(_drag.view):
 			var dragged: Node2D = _drag.view
 			dragged.global_position = dragged.global_position.lerp(
-				mouse - _drag.grab_offset, 0.4)
+				mouse - _drag.grab_offset, drag_follow)
 			dragged.z_index = 100
 		return
 
@@ -564,9 +571,9 @@ func _process(_delta: float) -> void:
 	for slot in _hand_slots:
 		var view: Node2D = slot.view
 		var raised: bool = view == _hovered_view and slot.playable
-		var goal: Vector2 = slot.home_pos + (Vector2(0, -46) if raised else Vector2.ZERO)
-		view.global_position = view.global_position.lerp(goal, 0.3)
-		view.scale = view.scale.lerp(slot.home_scale * (1.12 if raised else 1.0), 0.3)
+		var goal: Vector2 = slot.home_pos + (Vector2(0, -hover_raise) if raised else Vector2.ZERO)
+		view.global_position = view.global_position.lerp(goal, hand_follow)
+		view.scale = view.scale.lerp(slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
 		view.z_index = 60 if view == _hovered_view else 0
 
 
@@ -625,24 +632,24 @@ func _face_up_layout() -> Array:
 	for i in hand.size():
 		layout.append({
 			card = hand[i], pos = _hand_slot_pos(i, hand.size()),
-			rotation = 0.0, height = HAND_CARD_HEIGHT,
+			rotation = 0.0, height = hand_card_height,
 		})
 	var attack_count := game.table.size()
 	for i in attack_count:
 		var pair: Dictionary = game.table[i]
 		layout.append({
 			card = pair.attack, pos = _table_slot_pos(i, attack_count, false),
-			rotation = 0.0, height = TABLE_CARD_HEIGHT,
+			rotation = 0.0, height = table_card_height,
 		})
 		if pair.defense != null:
 			layout.append({
 				card = pair.defense, pos = _table_slot_pos(i, attack_count, true),
-				rotation = 0.14, height = TABLE_CARD_HEIGHT,
+				rotation = 0.14, height = table_card_height,
 			})
 	if game.trump_card in game.deck:
 		layout.append({
-			card = game.trump_card, pos = TALON_POS + Vector2(60, 0),
-			rotation = PI * 0.5, height = TALON_CARD_HEIGHT,
+			card = game.trump_card, pos = talon_pos + Vector2(60, 0),
+			rotation = PI * 0.5, height = talon_card_height,
 		})
 	return layout
 
@@ -670,7 +677,7 @@ func _resync() -> void:
 			spawned += 1
 		var target_scale: Vector2 = Vector2.ONE \
 			* (float(entry.height) / maxf(view.texture.get_height(), 1.0))
-		_animate_to(view, entry.pos, entry.rotation, target_scale, MOVE_DURATION, delay)
+		_animate_to(view, entry.pos, entry.rotation, target_scale, move_duration, delay)
 
 	# any card that had a face-up view but no longer belongs face up -> send it off
 	for card in _card_views.keys():
@@ -678,9 +685,9 @@ func _resync() -> void:
 			_animate_view_away(card)
 
 	_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
-		TALON_POS, TALON_CARD_HEIGHT, -1)
+		talon_pos, talon_card_height, -1)
 	_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
-		DISCARD_POS, DISCARD_CARD_HEIGHT, 1)
+		discard_pos, discard_card_height, 1)
 	_talon_label.text = "talon  %d" % game.talon_count()
 	_talon_label.visible = game.talon_count() > 0
 	_discard_label.text = "discard  %d" % game.discard.size()
@@ -700,7 +707,7 @@ func _create_view(card: CardData) -> Sprite2D:
 	var view := _instance_card()
 	view.setup(CardData.SUIT_NAMES[card.suit], card.rank, true)
 	view.position = _view_start_pos(card)
-	view.scale = Vector2.ONE * (TALON_CARD_HEIGHT / maxf(view.texture.get_height(), 1.0))
+	view.scale = Vector2.ONE * (talon_card_height / maxf(view.texture.get_height(), 1.0))
 	view.z_index = 10
 	_card_layer.add_child(view)
 	return view
@@ -713,7 +720,7 @@ func _view_start_pos(card: CardData) -> Vector2:
 			return _seat_layout(game.attacker).origin
 		if game.table[i].defense == card:
 			return _seat_layout(game.defender).origin
-	return TALON_POS
+	return talon_pos
 
 
 func _animate_view_away(card: CardData) -> void:
@@ -721,9 +728,9 @@ func _animate_view_away(card: CardData) -> void:
 	if view == null:
 		return # a card that briefly passed through the table without ever rendering
 	_card_views.erase(card)
-	var destination := TALON_POS
+	var destination := talon_pos
 	if card in game.discard:
-		destination = DISCARD_POS
+		destination = discard_pos
 	else:
 		for seat in game.num_players:
 			if seat != _near_seat() and card in game.hands[seat]:
@@ -732,9 +739,9 @@ func _animate_view_away(card: CardData) -> void:
 	_stop_tween(view)
 	var tween := create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tween.tween_property(view, "position", destination, CLEAR_ANIM)
-	tween.tween_property(view, "scale", view.scale * 0.6, CLEAR_ANIM)
-	tween.tween_property(view, "modulate:a", 0.0, CLEAR_ANIM)
+	tween.tween_property(view, "position", destination, clear_anim)
+	tween.tween_property(view, "scale", view.scale * 0.6, clear_anim)
+	tween.tween_property(view, "modulate:a", 0.0, clear_anim)
 	tween.chain().tween_callback(view.queue_free)
 
 
@@ -749,7 +756,7 @@ func _sync_back_stack(stack: Array, wanted: int, base: Vector2,
 		var back: Sprite2D = stack[i]
 		var back_scale := Vector2.ONE * (card_height / maxf(back.texture.get_height(), 1.0))
 		_animate_to(back, base + Vector2(i * 1.6 * lean, -i * 1.9),
-			0.0, back_scale, MOVE_DURATION, 0.0)
+			0.0, back_scale, move_duration, 0.0)
 
 
 func _sync_opponents() -> void:
@@ -846,7 +853,7 @@ func _rebuild_input_targets() -> void:
 		view.modulate.a = 1.0 if (can_play or playable.is_empty()) else 0.4
 		_hand_slots.append({
 			view = view, card = card, home_pos = _hand_slot_pos(i, hand.size()),
-			home_scale = Vector2.ONE * (HAND_CARD_HEIGHT / maxf(view.texture.get_height(), 1.0)),
+			home_scale = Vector2.ONE * (hand_card_height / maxf(view.texture.get_height(), 1.0)),
 			playable = can_play,
 		})
 
