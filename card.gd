@@ -3,27 +3,17 @@ extends Sprite2D
 ## The game logic (durak_game.gd) keeps its own plain CardData and never uses
 ## this node; the view maps one CardData to one of these for display.
 
-# Which deck skin to draw. Each set has its own filename scheme and card back.
+# Deck skin. Both sets share the scheme <suit>_<rank>.png + back_*.png.
 const CARD_SET := "og_set"
+const BACK := "back_red" # og_set: back_red/back_blue; kid_set: back_dark/back_light
 
-const SETS := {
-	"kid_set": {
-		face = "{s}_{r}",      # e.g. spades_A, clubs_10
-		ranks = {11: "J", 12: "Q", 13: "K", 14: "A"},
-		back = "back_dark",    # or back_light
-	},
-	"og_set": {
-		face = "{r}_of_{s}",   # e.g. ace_of_spades, 10_of_clubs
-		ranks = {11: "jack", 12: "queen", 13: "king", 14: "ace"},
-		back = "red_back",     # or blue_back
-	},
-}
+const _RANK_TOKENS := {11: "J", 12: "Q", 13: "K", 14: "A"}
 
 @export_enum("clubs", "diamonds", "hearts", "spades") var suit := "clubs":
 	set(value):
 		suit = value
 		_refresh_texture()
-@export_range(2, 14) var rank := 6:  # 11=J 12=Q 13=K 14=A
+@export_range(2, 14) var rank := 6: # 11=J 12=Q 13=K 14=A
 	set(value):
 		rank = value
 		_refresh_texture()
@@ -50,9 +40,7 @@ func _refresh_texture() -> void:
 
 
 func _texture_path() -> String:
-	var cfg: Dictionary = SETS[CARD_SET]
 	if not face_up:
-		return "res://cards/%s/%s.png" % [CARD_SET, cfg.back]
-	var rank_token: String = cfg.ranks.get(rank, str(rank))
-	var file: String = (cfg.face as String).format({s = suit, r = rank_token})
-	return "res://cards/%s/%s.png" % [CARD_SET, file]
+		return "res://cards/%s/%s.png" % [CARD_SET, BACK]
+	var rank_token: String = _RANK_TOKENS.get(rank, str(rank))
+	return "res://cards/%s/%s_%s.png" % [CARD_SET, suit, rank_token]

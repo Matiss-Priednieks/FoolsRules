@@ -7,4 +7,4 @@
 script = ExtResource("1_80nbo")
 
 [node name="Sprite2D" parent="." unique_id=901492980 instance=ExtResource("2_e2o6t")]
-position = Vector2(561, 298)
+position = Vector2(933, 505)
