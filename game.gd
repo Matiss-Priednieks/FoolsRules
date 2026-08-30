@@ -621,33 +621,44 @@ func _end_drag() -> void:
 
 
 func _process(_delta: float) -> void:
-	if not _waiting_for_human:
+	if _hand_slots.is_empty():
 		return
 
 	var mouse := get_global_mouse_position()
-	if not _drag.is_empty():
-		if is_instance_valid(_drag.view):
-			var dragged: Node2D = _drag.view
-			dragged.global_position = dragged.global_position.lerp(
-				mouse - _drag.grab_offset, drag_follow)
-			dragged.z_index = 100
-		return
+	var dragging: bool = not _drag.is_empty()
+	# hover / raise only when the human can actually act; the fan still settles below
+	var interactive: bool = _waiting_for_human and not dragging
+
+	if dragging and is_instance_valid(_drag.view):
+		var dragged: Node2D = _drag.view
+		dragged.global_position = dragged.global_position.lerp(
+			mouse - _drag.grab_offset, drag_follow)
+		dragged.z_index = 100
 
 	_hovered_view = null
-	for i in range(_hand_slots.size() - 1, -1, -1):
-		if _hand_slot_rect(_hand_slots[i]).has_point(mouse):
-			_hovered_view = _hand_slots[i].view
-			break
+	if interactive:
+		for i in range(_hand_slots.size() - 1, -1, -1):
+			if _hand_slot_rect(_hand_slots[i]).has_point(mouse):
+				_hovered_view = _hand_slots[i].view
+				break
 
-	for slot in _hand_slots:
+	# settle every hand card onto its fan slot each frame - position, tilt, scale
+	# and z - so the hand never freezes mid-pose when the turn passes to the bots
+	for idx in _hand_slots.size():
+		var slot: Dictionary = _hand_slots[idx]
 		var view: Node2D = slot.view
+		if dragging and view == _drag.view:
+			continue
 		var raised: bool = view == _hovered_view and slot.playable
 		# lift perpendicular to the fan so a tilted card rises straight off the arc
 		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
 		var goal: Vector2 = slot.home_pos + (lift if raised else Vector2.ZERO)
+		var target_angle: float = 0.0 if raised else slot.home_angle
 		view.global_position = view.global_position.lerp(goal, hand_follow)
-		view.scale = view.scale.lerp(slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
-		view.z_index = 60 if view == _hovered_view else 0
+		view.scale = view.scale.lerp(
+			slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
+		view.rotation = lerp_angle(view.rotation, target_angle, hand_follow)
+		view.z_index = 60 if raised else 10 + idx
 
 
 # stable hit-box for a hand card, using its resting slot (not its current tween pose)
@@ -726,7 +737,7 @@ func _face_up_layout() -> Array:
 	for i in hand.size():
 		layout.append({
 			card = hand[i], pos = _hand_slot_pos(i, hand.size()),
-			rotation = _hand_slot_angle(i, hand.size()), height = hand_card_height, z = 10,
+			rotation = _hand_slot_angle(i, hand.size()), height = hand_card_height, z = 10 + i,
 		})
 	var attack_count := game.table.size()
 	for i in attack_count:
@@ -792,9 +803,10 @@ func _resync() -> void:
 	_update_status()
 	_update_buttons()
 
-	if _waiting_for_human:
-		for slot in _hand_slots:
-			_stop_tween(slot.view) # from here _process owns the hand cards
+	# _process drives the hand every frame (fan pose + hover); drop the settle
+	# tween so the two don't fight over the same transform
+	for slot in _hand_slots:
+		_stop_tween(slot.view)
 
 
 func _create_view(card: CardData) -> Sprite2D:
@@ -943,8 +955,10 @@ func _rebuild_input_targets() -> void:
 		if view == null:
 			continue
 		var can_play: bool = playable.has(card)
-		# dim non-playable cards only while the user actually has a card play
-		view.modulate.a = 1.0 if (can_play or playable.is_empty()) else 0.4
+		# a card the human can't play right now is dimmed; when there is no card
+		# play at all (not your turn, or take/pass only) the whole hand dims, so
+		# a bright hand always means "you can act here"
+		view.modulate.a = 1.0 if can_play else 0.4
 		_hand_slots.append({
 			view = view, card = card, home_pos = _hand_slot_pos(i, hand.size()),
 			home_angle = _hand_slot_angle(i, hand.size()),
