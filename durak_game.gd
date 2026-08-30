@@ -42,6 +42,7 @@ var attack_limit: int               # max cards on the table this bout; set when
 var passed: Dictionary = {}         # attacker index -> true, since the last table change
 
 var is_out: Array[bool] = []        # finished the game (empty hand, empty talon)
+var finish_order: Array[int] = []   # seats in the order they went out; the durak is last
 var loser: int = -1
 var seed_used: int
 
@@ -338,6 +339,8 @@ func _resolve_bout(defender_took: bool) -> void:
 	if _active_count() <= 1:
 		phase = Phase.GAME_OVER
 		loser = _last_active()
+		if loser >= 0 and not finish_order.has(loser):
+			finish_order.append(loser)  # the durak, last
 		state_changed.emit()
 		game_over.emit(loser)
 		return
@@ -372,6 +375,7 @@ func _update_out() -> void:
 	for p in num_players:
 		if not is_out[p] and hands[p].is_empty():
 			is_out[p] = true
+			finish_order.append(p)
 
 
 func _last_active() -> int:

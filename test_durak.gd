@@ -55,6 +55,11 @@ func _play_random_game(game_seed: int) -> Dictionary:
 	if bad != "":
 		return {ok = false, steps = steps, msg = "post-game: " + bad}
 
+	var fo: Array = g.finish_order.duplicate()
+	fo.sort()
+	if fo != [0, 1, 2, 3]:
+		return {ok = false, steps = steps, msg = "finish_order not a permutation: %s" % g.finish_order}
+
 	return {ok = true, steps = steps, loser = g.loser}
 
 
