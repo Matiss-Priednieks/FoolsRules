@@ -29,5 +29,5 @@ func is_trump(trump_suit: int) -> bool:
 
 
 func _to_string() -> String:
-	var r: String = RANK_NAMES.get(rank, str(rank))
-	return "%s%s" % [r, SUIT_NAMES[suit][0].to_upper()]
+	var rank_name: String = RANK_NAMES.get(rank, str(rank))
+	return "%s%s" % [rank_name, SUIT_NAMES[suit][0].to_upper()]

@@ -1,8 +1,9 @@
 extends SceneTree
 ## Headless fuzz test for the rules engine.
 ##   godot --headless --script res://test_durak.gd
-## Plays many random-legal games and checks that every one terminates and that
-## cards are conserved (36 at all times, all distinct).
+## Plays many random-legal games and checks that every one terminates, that
+## cards are conserved (36, all distinct, at every step), and that no bug
+## signatures show up.
 
 const GAMES := 3000
 const STEP_GUARD := 20000
@@ -11,102 +12,103 @@ const STEP_GUARD := 20000
 func _initialize() -> void:
 	var failures := 0
 	var loser_tally := {-1: 0, 0: 0, 1: 0, 2: 0, 3: 0}
-	var max_steps := 0
+	var longest := 0
 
 	for i in GAMES:
-		var r := _play_random_game(i + 1)
-		max_steps = maxi(max_steps, r.steps)
-		if r.ok:
-			loser_tally[r.loser] += 1
+		var result := _play_random_game(i + 1)
+		longest = maxi(longest, result.steps)
+		if result.ok:
+			loser_tally[result.loser] += 1
 		else:
 			failures += 1
-			push_error("seed %d, step %d: %s" % [i + 1, r.steps, r.msg])
+			push_error("seed %d, step %d: %s" % [i + 1, result.steps, result.msg])
 
-	print("ran %d games | failures: %d | longest game: %d steps" % [GAMES, failures, max_steps])
-	print("loser distribution (‑1 = draw): %s" % loser_tally)
+	print("ran %d games | failures: %d | longest game: %d steps" % [GAMES, failures, longest])
+	print("loser distribution (-1 = draw): %s" % loser_tally)
 	quit(1 if failures > 0 else 0)
 
 
 func _play_random_game(game_seed: int) -> Dictionary:
 	seed(game_seed)
-	var g := DurakGame.new(4, game_seed)
+	var game := DurakGame.new(4, game_seed)
 	var steps := 0
 
-	while not g.is_finished():
+	while not game.is_finished():
 		steps += 1
 		if steps > STEP_GUARD:
 			return {ok = false, steps = steps, msg = "did not terminate"}
 
-		var bad := _check_invariants(g)
-		if bad != "":
-			return {ok = false, steps = steps, msg = bad}
+		var problem := _check_invariants(game)
+		if problem != "":
+			return {ok = false, steps = steps, msg = problem}
 
-		var pool := g.get_all_legal_actions()
-		if pool.is_empty():
+		var legal := game.get_all_legal_actions()
+		if legal.is_empty():
 			return {ok = false, steps = steps,
-				msg = "no legal action, phase=%d, not finished" % g.phase}
+				msg = "no legal action, phase=%d, not finished" % game.phase}
 
 		# bug signature: everything is beaten but the only move is the defender
-		# taking their own completed defense (attackers can't pass/throw in)
-		var only_self_take := pool.all(func(a): return a.type == "take")
-		if only_self_take and _unbeaten(g) == 0:
+		# taking their own completed defense (attackers can't pass / throw in)
+		var only_self_take := legal.all(func(action): return action.type == "take")
+		if only_self_take and _unbeaten_count(game) == 0:
 			return {ok = false, steps = steps,
 				msg = "defender forced to take a fully-beaten table"}
 
-		var action: Dictionary = pool[randi() % pool.size()]
-		if not g.apply_action(action):
+		var action: Dictionary = legal[randi() % legal.size()]
+		if not game.apply_action(action):
 			return {ok = false, steps = steps,
 				msg = "apply_action rejected a legal action: %s" % action}
 
-	var bad := _check_invariants(g)
-	if bad != "":
-		return {ok = false, steps = steps, msg = "post-game: " + bad}
+	var problem := _check_invariants(game)
+	if problem != "":
+		return {ok = false, steps = steps, msg = "post-game: " + problem}
 
-	var fo: Array = g.finish_order.duplicate()
-	fo.sort()
-	if fo != [0, 1, 2, 3]:
-		return {ok = false, steps = steps, msg = "finish_order not a permutation: %s" % g.finish_order}
+	var sorted_order: Array = game.finish_order.duplicate()
+	sorted_order.sort()
+	if sorted_order != [0, 1, 2, 3]:
+		return {ok = false, steps = steps,
+			msg = "finish_order not a permutation: %s" % game.finish_order}
 
-	return {ok = true, steps = steps, loser = g.loser}
+	return {ok = true, steps = steps, loser = game.loser}
 
 
-func _check_invariants(g: DurakGame) -> String:
-	if g.total_card_count() != 36:
-		return "card count = %d" % g.total_card_count()
+func _check_invariants(game: DurakGame) -> String:
+	if game.total_card_count() != 36:
+		return "card count = %d" % game.total_card_count()
 
 	var seen := {}
-	for c in _all_cards(g):
-		var key: int = c.suit * 100 + c.rank
+	for card in _all_cards(game):
+		var key: int = card.suit * 100 + card.rank
 		if seen.has(key):
-			return "duplicate card %s" % c
+			return "duplicate card %s" % card
 		seen[key] = true
 	if seen.size() != 36:
 		return "distinct cards = %d" % seen.size()
 
-	if not g.is_finished():
-		if g.defender == g.attacker:
+	if not game.is_finished():
+		if game.defender == game.attacker:
 			return "defender == attacker"
-		if g.is_out[g.defender] or g.is_out[g.attacker]:
+		if game.is_out[game.defender] or game.is_out[game.attacker]:
 			return "an out player is attacking/defending"
 	return ""
 
 
-func _unbeaten(g: DurakGame) -> int:
-	var n := 0
-	for pair in g.table:
+func _unbeaten_count(game: DurakGame) -> int:
+	var count := 0
+	for pair in game.table:
 		if pair.defense == null:
-			n += 1
-	return n
+			count += 1
+	return count
 
 
-func _all_cards(g: DurakGame) -> Array:
-	var out: Array = []
-	out.append_array(g.deck)
-	out.append_array(g.discard)
-	for h in g.hands:
-		out.append_array(h)
-	for pair in g.table:
-		out.append(pair.attack)
+func _all_cards(game: DurakGame) -> Array:
+	var cards: Array = []
+	cards.append_array(game.deck)
+	cards.append_array(game.discard)
+	for hand in game.hands:
+		cards.append_array(hand)
+	for pair in game.table:
+		cards.append(pair.attack)
 		if pair.defense != null:
-			out.append(pair.defense)
-	return out
+			cards.append(pair.defense)
+	return cards

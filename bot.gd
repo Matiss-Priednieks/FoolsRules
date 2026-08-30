@@ -1,53 +1,58 @@
 class_name Bot
 ## Dumb heuristic policy for the AI seats. Phase 4 will make this smarter.
-## Notes: bots never translate yet, and they prefer passing over throwing in.
+## For now bots never translate, and they would rather pass than throw a card in.
 
-## Returns one legal action for whichever bot seat should act now, or {} if the
-## only legal actions belong to `exclude_player` (the human).
-static func pick(game: DurakGame, exclude_player: int = -1) -> Dictionary:
-	var acts: Array[Dictionary] = []
-	for p in game.num_players:
-		if p != exclude_player:
-			acts.append_array(game.get_legal_actions(p))
-	if acts.is_empty():
+## Returns one legal action for whichever bot seat should move now, or {} when
+## the only legal actions belong to `human_seat`.
+static func pick(game: DurakGame, human_seat: int = -1) -> Dictionary:
+	var actions: Array[Dictionary] = []
+	for seat in game.num_players:
+		if seat != human_seat:
+			actions.append_array(game.get_legal_actions(seat))
+	if actions.is_empty():
 		return {}
 
 	var trump: int = game.trump_suit
 
-	# 1. Beat the current attack with the cheapest card that does the job.
-	var defends := acts.filter(func(a): return a.type == "defend")
+	# 1. Beat the attack with the cheapest card that does the job.
+	var defends := actions.filter(func(action): return action.type == "defend")
 	if not defends.is_empty():
-		defends.sort_custom(func(a, b): return _val(a.card, trump) < _val(b.card, trump))
-		return defends[0]
+		return _cheapest(defends, trump)
 
-	var attacks := acts.filter(func(a): return a.type == "attack")
+	var attacks := actions.filter(func(action): return action.type == "attack")
 
 	# 2. Opening the bout: lead the cheapest card (no pass is offered here).
 	if game.table.is_empty() and not attacks.is_empty():
-		attacks.sort_custom(func(a, b): return _val(a.card, trump) < _val(b.card, trump))
-		return attacks[0]
+		return _cheapest(attacks, trump)
 
-	# 3. Otherwise rather pass than commit cards...
-	var passes := acts.filter(func(a): return a.type == "pass")
+	# 3. Otherwise rather pass than spend a card...
+	var passes := actions.filter(func(action): return action.type == "pass")
 	if not passes.is_empty():
 		return passes[0]
 
-	# 4. ...but if we must add, throw in the cheapest non-trump.
-	var cheap := attacks.filter(func(a): return a.card.suit != trump)
-	if not cheap.is_empty():
-		cheap.sort_custom(func(a, b): return _val(a.card, trump) < _val(b.card, trump))
-		return cheap[0]
+	# 4. ...but if forced to add, throw in the cheapest non-trump.
+	var non_trump_throws := attacks.filter(func(action): return action.card.suit != trump)
+	if not non_trump_throws.is_empty():
+		return _cheapest(non_trump_throws, trump)
 
 	# 5. Give up.
-	var takes := acts.filter(func(a): return a.type == "take")
+	var takes := actions.filter(func(action): return action.type == "take")
 	if not takes.is_empty():
 		return takes[0]
 
-	for a in acts:
-		if a.type != "translate":
-			return a
-	return acts[0]
+	for action in actions:
+		if action.type != "translate":
+			return action
+	return actions[0]
 
 
-static func _val(c: CardData, trump: int) -> int:
-	return c.rank + (100 if c.suit == trump else 0)
+static func _cheapest(card_actions: Array, trump: int) -> Dictionary:
+	var best: Dictionary = card_actions[0]
+	for action in card_actions:
+		if _card_value(action.card, trump) < _card_value(best.card, trump):
+			best = action
+	return best
+
+
+static func _card_value(card: CardData, trump: int) -> int:
+	return card.rank + (100 if card.suit == trump else 0)
