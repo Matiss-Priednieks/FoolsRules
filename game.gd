@@ -17,10 +17,10 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 1.5, 0.01) var move_duration := 0.34 ## generic settle tween
 @export_range(0.0, 1.5, 0.01) var play_anim := 0.30    ## played card sliding onto the table
 @export_range(0.0, 1.5, 0.01) var play_beat := 0.34    ## hold after a card is played
-@export_range(0.0, 1.5, 0.01) var clear_anim := 0.46   ## cards leaving the table (to discard / into a hand)
-@export_range(0.0, 1.5, 0.01) var clear_beat := 0.58   ## hold after the table clears
-@export_range(0.0, 1.5, 0.01) var refill_anim := 0.28  ## a card flying from the talon into a hand
-@export_range(0.0, 1.5, 0.01) var refill_beat := 0.24  ## hold after each seat refills
+@export_range(0.0, 1.5, 0.01) var clear_anim := 0.40   ## cards leaving the table (to discard / into a hand)
+@export_range(0.0, 1.5, 0.01) var clear_beat := 0.34   ## hold after the table clears
+@export_range(0.0, 1.5, 0.01) var refill_anim := 0.26  ## a card flying from the talon into a hand
+@export_range(0.0, 1.5, 0.01) var refill_beat := 0.14  ## hold after each seat refills
 
 @export_group("Card feel")
 @export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
@@ -299,28 +299,27 @@ func _show_end_screen(loser: int) -> void:
 # ---------------------------------------------------------------- bot turn loop
 
 ## Keeps letting bots act, one at a time, until only the human can move (or the
-## game ends). Runs alongside the human: while it waits out `bot_delay` the
-## board is live, and a human move bumps `_turn_epoch`, which makes this loop
-## bail so a fresh one can start after that move's animation.
+## game ends). `bot_delay` paces the gap *between* consecutive bot moves only -
+## the first bot reply after the human acts is immediate, and control returns to
+## the human as soon as the last bot has moved (no trailing wait). A human move
+## bumps `_turn_epoch`, making this loop bail so a fresh one starts after it.
 func _run_bot_turns() -> void:
 	var run_id := _game_id
 	var epoch := _turn_epoch
 	while not game.is_finished():
 		if run_id != _game_id or epoch != _turn_epoch:
 			return
+		if _busy: # a human move slipped in and is animating; wait it out
+			await _wait(0.05)
+			continue
 		var action: Dictionary = Bot.pick(game, human_seat)
 		if action.is_empty():
 			return # only the human can move now
-		if bot_delay > 0.0:
-			await _wait(bot_delay) # the board stays live during this pause
-		else:
-			await get_tree().process_frame
+		await _apply_and_animate(action)
 		if run_id != _game_id or epoch != _turn_epoch or game.is_finished():
 			return
-		if _busy: # a human move slipped in and is animating; re-pick next loop
-			await _wait(0.05)
-			continue
-		await _apply_and_animate(action)
+		if bot_delay > 0.0 and not Bot.pick(game, human_seat).is_empty():
+			await _wait(bot_delay) # only pause if another bot move is coming
 
 
 # ---------------------------------------------------------------- action + animation
