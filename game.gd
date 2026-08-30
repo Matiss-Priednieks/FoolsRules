@@ -801,8 +801,6 @@ func _process(_delta: float) -> void:
 
 	var mouse := get_global_mouse_position()
 	var dragging: bool = not _drag.is_empty()
-	# hover / raise only when the human can actually act; the fan still settles below
-	var interactive: bool = _waiting_for_human and not dragging
 
 	if dragging and is_instance_valid(_drag.view):
 		var dragged: Node2D = _drag.view
@@ -810,6 +808,13 @@ func _process(_delta: float) -> void:
 			mouse - _drag.grab_offset, drag_follow)
 		dragged.z_index = 100
 
+	# a move is animating: the choreography owns every card, and _hand_slots may
+	# still point at a hand view it is about to free. Leave the hand alone.
+	if _busy:
+		return
+
+	# hover / raise only when the human can actually act; the fan still settles below
+	var interactive: bool = _waiting_for_human and not dragging
 	_hovered_view = null
 	if interactive:
 		for i in range(_hand_slots.size() - 1, -1, -1):
@@ -821,6 +826,8 @@ func _process(_delta: float) -> void:
 	# and z - so the hand never freezes mid-pose when the turn passes to the bots
 	for idx in _hand_slots.size():
 		var slot: Dictionary = _hand_slots[idx]
+		if not is_instance_valid(slot.view):
+			continue # stale entry from a restart / bailed coroutine; next resync fixes it
 		var view: Node2D = slot.view
 		if dragging and view == _drag.view:
 			continue
