@@ -115,6 +115,10 @@ var _fan_streams: Array[AudioStream] = []   # card_fan_1..3: a pile picked up / 
 var _voices: Array[AudioStreamPlayer] = []
 var _voice_next := 0
 
+# --- fonts --------------------------------------------------------------
+var _ui_theme: Theme
+var _font_bold: Font
+
 
 func _ready() -> void:
 	_headless = DisplayServer.get_name() == "headless"
@@ -123,6 +127,8 @@ func _ready() -> void:
 		human_seat = -1 # let the headless smoke test self-play
 	else:
 		_init_audio()
+
+	_build_ui_theme()
 
 	var crt := get_node_or_null("CRT")
 	if crt:
@@ -154,6 +160,7 @@ func _ready() -> void:
 	_pass_button = _make_button("Pass", Vector2(1520, 770), _on_pass)
 
 	_translate_strip = ColorRect.new()
+	_translate_strip.theme = _ui_theme
 	_translate_strip.color = Color(0.9, 0.75, 0.2, 0.22)
 	_translate_strip.position = translate_strip_rect.position
 	_translate_strip.size = translate_strip_rect.size
@@ -175,9 +182,22 @@ func _ready() -> void:
 	_new_game()
 
 
+# Kremlin Kourier II for every bit of on-screen text; the bold cut is wired
+# in for Button and used explicitly on the end-screen title.
+func _build_ui_theme() -> void:
+	_ui_theme = Theme.new()
+	var body: Font = load("res://fonts/Kremlin Kourier II.ttf")
+	_font_bold = load("res://fonts/Kremlin Kourier II Bold.ttf")
+	if body:
+		_ui_theme.default_font = body
+	if _font_bold:
+		_ui_theme.set_font("font", "Button", _font_bold)
+
+
 func _make_label(pos: Vector2, font_size: int) -> Label:
 	var label := Label.new()
 	label.position = pos
+	label.theme = _ui_theme
 	label.add_theme_font_size_override("font_size", font_size)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_layer.add_child(label)
@@ -223,6 +243,7 @@ func _make_button(text: String, pos: Vector2, on_pressed: Callable) -> Button:
 	button.text = text
 	button.position = pos
 	button.size = Vector2(150, 60)
+	button.theme = _ui_theme
 	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", 22)
 	button.pressed.connect(on_pressed)
@@ -233,6 +254,7 @@ func _make_button(text: String, pos: Vector2, on_pressed: Callable) -> Button:
 
 func _build_end_screen() -> void:
 	_end_screen = ColorRect.new()
+	_end_screen.theme = _ui_theme
 	_end_screen.color = Color(0.03, 0.05, 0.04, 0.78)
 	_end_screen.position = Vector2.ZERO
 	_end_screen.size = Vector2(1920, 1080)
@@ -243,6 +265,8 @@ func _build_end_screen() -> void:
 	_end_title.position = Vector2(0, 300)
 	_end_title.size = Vector2(1920, 80)
 	_end_title.add_theme_font_size_override("font_size", 56)
+	if _font_bold:
+		_end_title.add_theme_font_override("font", _font_bold)
 	_end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_end_screen.add_child(_end_title)
 
