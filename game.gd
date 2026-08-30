@@ -552,8 +552,10 @@ func _play_local(action: Dictionary) -> void:
 	_turn_epoch += 1
 	_drag = {}
 	_hovered_view = null
-	await _apply_and_animate(action)
+	# set before the await: _apply_and_animate() ends with _resync(), which is
+	# what puts the Confirm button on screen - it has to see the flag already set
 	_move_pending = true
+	await _apply_and_animate(action)
 	if _human_actions().is_empty():
 		_release_to_bots() # nothing left to add - hand over on its own
 
@@ -562,6 +564,7 @@ func _play_local(action: Dictionary) -> void:
 ## must formally "pass", or the engine keeps the bout open waiting on them.
 func _release_to_bots() -> void:
 	_move_pending = false
+	_update_buttons() # drop Confirm now, don't wait for the next resync
 	if game != null and not game.is_finished():
 		for action in _human_actions():
 			if action.type == "pass":
