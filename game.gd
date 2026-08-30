@@ -48,18 +48,18 @@ var _talon_stack: Array[Sprite2D] = []
 var _discard_stack: Array[Sprite2D] = []
 
 # --- frame state ------------------------------------------------------------
-var _needs_resync := false
-var _game_id := 0                 # bumped per game; a stale _run_bot_turns() bails on mismatch
+var _game_id := 0                 # bumped per game; a stale coroutine bails on mismatch
 var _waiting_for_human := false   # true when the only actor left is the human
 var _hand_slots: Array = []       # [{view, card, home_pos, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _drag := {}                   # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
-var _prev_table_size := 0
+var _headless := false
 
 
 func _ready() -> void:
-	if DisplayServer.get_name() == "headless":
+	_headless = DisplayServer.get_name() == "headless"
+	if _headless:
 		bot_delay = 0.0
 		human_seat = -1 # let the headless smoke test self-play
 
@@ -158,10 +158,8 @@ func _build_end_screen() -> void:
 func _new_game() -> void:
 	_game_id += 1
 	game = DurakGame.new(4, 0)
-	game.state_changed.connect(_on_state_changed)
 	game.game_over.connect(_on_game_over)
-	_prev_table_size = 0
-	_resync()
+	_resync() # deal: every view spawns at the talon and fans out to its hand
 	_run_bot_turns()
 
 
@@ -185,16 +183,9 @@ func _restart() -> void:
 	_open_attack_views.clear()
 	_drag = {}
 	_hovered_view = null
-	if game != null:
-		if game.state_changed.is_connected(_on_state_changed):
-			game.state_changed.disconnect(_on_state_changed)
-		if game.game_over.is_connected(_on_game_over):
-			game.game_over.disconnect(_on_game_over)
+	if game != null and game.game_over.is_connected(_on_game_over):
+		game.game_over.disconnect(_on_game_over)
 	_new_game()
-
-
-func _on_state_changed() -> void:
-	_needs_resync = true # coalesce a burst of emits into one _resync next frame
 
 
 func _on_game_over(loser: int) -> void:
@@ -241,10 +232,8 @@ func _run_bot_turns() -> void:
 	if human_seat >= 0 and actors.size() == 1 and actors[0] == human_seat:
 		return # nothing to do until the user acts
 
-	var settle := 0.45 if (game.table.is_empty() and _prev_table_size > 0) else 0.0
-	_prev_table_size = game.table.size()
-	if bot_delay > 0.0 or settle > 0.0:
-		await get_tree().create_timer(bot_delay + settle).timeout
+	if bot_delay > 0.0:
+		await _wait(bot_delay)
 	else:
 		await get_tree().process_frame
 	if running_for != _game_id or game.is_finished():
@@ -253,9 +242,182 @@ func _run_bot_turns() -> void:
 	var action: Dictionary = Bot.pick(game, human_seat)
 	if action.is_empty():
 		return
-	game.apply_action(action)
-	_prev_table_size = game.table.size()
+	await _apply_and_animate(action)
+	if running_for != _game_id:
+		return
 	_run_bot_turns()
+
+
+# ---------------------------------------------------------------- action + animation
+
+## Applies one action, then plays the resulting card movements as an ordered
+## sequence: the played card first, then the table clearing (all beaten -> the
+## discard, or the defender takes it), then each seat's refill from the talon in
+## turn order. Ends by settling every sprite to the true final layout.
+func _apply_and_animate(action: Dictionary) -> void:
+	var run_id := _game_id
+	_waiting_for_human = false
+	var before := _snapshot()
+	var bout_attacker: int = game.attacker
+	var bout_defender: int = game.defender
+
+	game.apply_action(action)
+
+	# sort every moved card into what happened to it
+	var played: Array[CardData] = []
+	var discarded: Array[CardData] = []
+	var taken: Array[CardData] = []
+	var taker := -1
+	var refilled := {} # seat -> Array[CardData]
+	var after := _snapshot()
+	for card in after:
+		var was: String = before.get(card, after[card])
+		var now: String = after[card]
+		if was == now:
+			continue
+		var from_hand := was.begins_with("hand:")
+		if now == "table" and from_hand:
+			played.append(card)
+		elif now == "discard":
+			if from_hand:
+				played.append(card)
+			discarded.append(card)
+		elif now.begins_with("hand:") and (was == "table" or from_hand):
+			if from_hand:
+				played.append(card)
+			taken.append(card)
+			taker = now.substr(5).to_int()
+		elif now.begins_with("hand:") and was == "talon":
+			var seat := now.substr(5).to_int()
+			refilled.get_or_add(seat, [] as Array[CardData]).append(card)
+
+	# 1. the played card slides onto the table
+	for card in played:
+		var view: Sprite2D = _card_views.get(card)
+		if view == null:
+			view = _create_view(card)
+			_card_views[card] = view
+		var slot := _table_target_for(card)
+		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, TABLE_CARD_HEIGHT), 0.24, 0.0)
+	if not played.is_empty():
+		await _wait(0.26)
+		if run_id != _game_id: return
+
+	# 2. clear the table
+	if not discarded.is_empty():
+		for card in discarded:
+			_animate_view_away(card)
+		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
+			DISCARD_POS, DISCARD_CARD_HEIGHT, 1)
+		await _wait(0.42)
+		if run_id != _game_id: return
+	elif not taken.is_empty():
+		if taker == human_seat:
+			for card in taken:
+				var view: Sprite2D = _card_views.get(card)
+				if view != null:
+					_animate_to(view, _seat_layout(human_seat).origin, 0.0,
+						_fit_scale(view, HAND_CARD_HEIGHT), 0.34, 0.0)
+		else:
+			for card in taken:
+				_animate_view_away(card)
+			_grow_opponent_backs(taker)
+		await _wait(0.42)
+		if run_id != _game_id: return
+
+	# 3. refill from the talon, one seat at a time, in the engine's refill order
+	if not refilled.is_empty():
+		for seat in _refill_order(bout_attacker, bout_defender):
+			if not refilled.has(seat):
+				continue
+			if seat == human_seat:
+				_draw_into_hand(seat)
+			else:
+				_grow_opponent_backs(seat)
+			_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
+				TALON_POS, TALON_CARD_HEIGHT, -1)
+			await _wait(0.16)
+			if run_id != _game_id: return
+
+	if run_id != _game_id:
+		return
+	_resync() # 4. settle every sprite to the final layout and unlock input
+
+
+func _wait(seconds: float) -> void:
+	if _headless:
+		await get_tree().process_frame
+	else:
+		await get_tree().create_timer(seconds).timeout
+
+
+func _snapshot() -> Dictionary:
+	# CardData -> zone tag: "talon" | "discard" | "table" | "hand:<seat>"
+	var zones := {}
+	for card in game.deck:
+		zones[card] = "talon"
+	for card in game.discard:
+		zones[card] = "discard"
+	for seat in game.num_players:
+		for card in game.hands[seat]:
+			zones[card] = "hand:%d" % seat
+	for pair in game.table:
+		zones[pair.attack] = "table"
+		if pair.defense != null:
+			zones[pair.defense] = "table"
+	return zones
+
+
+func _refill_order(first_attacker: int, bout_defender: int) -> Array[int]:
+	# mirrors DurakGame._refill: attacker, then clockwise, defender last
+	var order: Array[int] = []
+	var seat := first_attacker
+	for _step in game.num_players:
+		order.append(seat)
+		seat = (seat + 1) % game.num_players
+	order.erase(bout_defender)
+	order.append(bout_defender)
+	return order
+
+
+func _table_target_for(card: CardData) -> Dictionary:
+	var count := game.table.size()
+	for i in count:
+		if game.table[i].attack == card:
+			return {pos = _table_slot_pos(i, count, false), angle = 0.0}
+		if game.table[i].defense == card:
+			return {pos = _table_slot_pos(i, count, true), angle = 0.14}
+	return {pos = BOARD_CENTER, angle = 0.0} # bout already cleared; a brief flash at centre
+
+
+func _draw_into_hand(seat: int) -> void:
+	var hand: Array = game.hands[seat]
+	for i in hand.size():
+		var card: CardData = hand[i]
+		if _card_views.has(card):
+			continue
+		var view := _create_view(card) # spawns at the talon
+		_card_views[card] = view
+		_animate_to(view, _hand_slot_pos(i, hand.size()), 0.0,
+			_fit_scale(view, HAND_CARD_HEIGHT), 0.22, i * 0.03)
+
+
+func _grow_opponent_backs(seat: int) -> void:
+	if seat == _near_seat():
+		return
+	if not _opponent_backs.has(seat):
+		_opponent_backs[seat] = []
+	var backs: Array = _opponent_backs[seat]
+	var wanted: int = game.hands[seat].size()
+	while backs.size() < wanted:
+		backs.append(_new_back(TALON_POS, 4))
+	for i in backs.size():
+		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), 0.0,
+			_fit_scale(backs[i], OPPONENT_CARD_HEIGHT), 0.22, 0.0)
+
+
+func _fit_scale(view: Sprite2D, target_height: float) -> Vector2:
+	return Vector2.ONE * (target_height / maxf(view.texture.get_height(), 1.0))
 
 
 # ---------------------------------------------------------------- human actions
@@ -269,7 +431,7 @@ func _human_actions() -> Array:
 func _submit(action: Dictionary) -> void:
 	_drag = {}
 	_hovered_view = null
-	game.apply_action(action)
+	await _apply_and_animate(action)
 	_run_bot_turns()
 
 
@@ -357,9 +519,6 @@ func _end_drag() -> void:
 
 
 func _process(_delta: float) -> void:
-	if _needs_resync:
-		_needs_resync = false
-		_resync()
 	if not _waiting_for_human:
 		return
 
@@ -534,7 +693,9 @@ func _view_start_pos(card: CardData) -> Vector2:
 
 
 func _animate_view_away(card: CardData) -> void:
-	var view: Sprite2D = _card_views[card]
+	var view: Sprite2D = _card_views.get(card)
+	if view == null:
+		return # a card that briefly passed through the table without ever rendering
 	_card_views.erase(card)
 	var destination := TALON_POS
 	if card in game.discard:
@@ -575,20 +736,12 @@ func _sync_opponents() -> void:
 				_update_seat_label(seat)
 			continue
 
-		var hand_size: int = game.hands[seat].size()
 		if not _opponent_backs.has(seat):
 			_opponent_backs[seat] = []
 		var backs: Array = _opponent_backs[seat]
-		while backs.size() < hand_size:
-			backs.append(_new_back(TALON_POS, 4))
-		while backs.size() > hand_size:
+		while backs.size() > game.hands[seat].size():
 			_fade_out_and_free(backs.pop_back())
-		for i in backs.size():
-			var back: Sprite2D = backs[i]
-			var back_scale := Vector2.ONE \
-				* (OPPONENT_CARD_HEIGHT / maxf(back.texture.get_height(), 1.0))
-			_animate_to(back, _opponent_slot_pos(seat, i, hand_size),
-				0.0, back_scale, MOVE_DURATION, 0.0)
+		_grow_opponent_backs(seat) # spawns any missing backs and re-homes them all
 		_update_seat_label(seat)
 
 
