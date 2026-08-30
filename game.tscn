@@ -1,8 +1,32 @@
-[gd_scene format=3 uid="uid://ct3vu4eosia50"]
+[gd_scene load_steps=4 format=3 uid="uid://ct3vu4eosia50"]
 
 [ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://game.gd" id="1_80nbo"]
+[ext_resource type="Shader" path="res://crt.gdshader" id="2_crt"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
+shader = ExtResource("2_crt")
+shader_parameter/curvature = 0.08
+shader_parameter/bezel = 0.004
+shader_parameter/scanline_amt = 0.15
+shader_parameter/scanline_freq = 1080.0
+shader_parameter/mask_amt = 0.1
+shader_parameter/aberration = 0.6
+shader_parameter/vignette_amt = 0.3
+shader_parameter/flicker_amt = 0.02
+shader_parameter/brightness = 1.1
 
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
 talon_pos = Vector2(250, 150)
 discard_pos = Vector2(1690, 800)
+
+[node name="CRT" type="CanvasLayer" parent="."]
+layer = 128
+
+[node name="Screen" type="ColorRect" parent="CRT"]
+material = SubResource("ShaderMaterial_crt")
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2

@@ -35,6 +35,14 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(40.0, 320.0, 1.0) var opponent_card_height := 118.0
 @export_range(40.0, 320.0, 1.0) var discard_card_height := 130.0
 
+@export_group("CRT")
+@export var crt_enabled := true:
+	set(value):
+		crt_enabled = value
+		var crt := get_node_or_null("CRT")
+		if crt:
+			crt.visible = value
+
 @export_group("Positions")
 @export var talon_pos := Vector2(250, 560)
 @export var discard_pos := Vector2(1690, 560)
@@ -83,6 +91,10 @@ func _ready() -> void:
 	if _headless:
 		bot_delay = 0.0
 		human_seat = -1 # let the headless smoke test self-play
+
+	var crt := get_node_or_null("CRT")
+	if crt:
+		crt.visible = crt_enabled and not _headless
 
 	_slot_layer = Node2D.new()
 	add_child(_slot_layer) # added first -> drawn behind the cards
