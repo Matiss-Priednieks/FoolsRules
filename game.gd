@@ -182,11 +182,11 @@ func _ready() -> void:
 	_new_game()
 
 
-# Sonttak for every bit of on-screen text. It ships as one weight, so the
-# heavier face for Button / the end-screen title is synthesised.
+# dm-serif for every bit of on-screen text. One weight, so the heavier face
+# for Button / the end-screen title is synthesised.
 func _build_ui_theme() -> void:
 	_ui_theme = Theme.new()
-	var body: Font = load("res://fonts/Sonttak.otf")
+	var body: Font = load("res://fonts/dm-serif.ttf")
 	if body:
 		_ui_theme.default_font = body
 		var bold := FontVariation.new()

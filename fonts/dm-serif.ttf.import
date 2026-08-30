@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://5qrq3qyefv4u"
-path="res://.godot/imported/Sonttak.otf-da7194a74a8ad66eac170f44fa0a2a10.fontdata"
+uid="uid://ktehcoeqxyot"
+path="res://.godot/imported/dm-serif.ttf-861ece3622b3e018ee7749c831389053.fontdata"
 
 [deps]
 
-source_file="res://fonts/Sonttak.otf"
-dest_files=["res://.godot/imported/Sonttak.otf-da7194a74a8ad66eac170f44fa0a2a10.fontdata"]
+source_file="res://fonts/dm-serif.ttf"
+dest_files=["res://.godot/imported/dm-serif.ttf-861ece3622b3e018ee7749c831389053.fontdata"]
 
 [params]
 
