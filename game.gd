@@ -44,6 +44,9 @@ const BOARD_CENTER := Vector2(960, 540)
 var game: DurakGame
 
 # --- persistent scene nodes ----------------------------------------------------
+var _slot_layer: Node2D          # empty-pile outline markers, drawn behind the cards
+var _talon_marker: Line2D
+var _discard_marker: Line2D
 var _card_layer: Node2D          # every card / back sprite lives here
 var _ui_layer: CanvasLayer
 var _status_label: Label         # top line: trump / phase / pile counts
@@ -81,14 +84,21 @@ func _ready() -> void:
 		bot_delay = 0.0
 		human_seat = -1 # let the headless smoke test self-play
 
+	_slot_layer = Node2D.new()
+	add_child(_slot_layer) # added first -> drawn behind the cards
+	_talon_marker = _make_slot_marker(talon_card_height)
+	_discard_marker = _make_slot_marker(discard_card_height)
 	_card_layer = Node2D.new()
 	add_child(_card_layer)
 	_ui_layer = CanvasLayer.new()
 	add_child(_ui_layer)
 
 	_status_label = _make_label(Vector2(24, 18), 22)
-	_talon_label = _make_label(talon_pos + Vector2(-40, 96), 18)
-	_discard_label = _make_label(discard_pos + Vector2(-40, 96), 18)
+	_talon_label = _make_caption()
+	_discard_label = _make_caption()
+	_talon_label.text = "Talon"
+	_discard_label.text = "Discard"
+	_place_slots()
 	for _i in 4:
 		_seat_labels.append(_make_label(Vector2.ZERO, 18))
 
@@ -124,6 +134,40 @@ func _make_label(pos: Vector2, font_size: int) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_layer.add_child(label)
 	return label
+
+
+# a card-footprint outline that marks a pile spot even when it is empty
+func _make_slot_marker(card_height: float) -> Line2D:
+	var w := card_height * (500.0 / 726.0)
+	var half := Vector2(w, card_height) * 0.5
+	var line := Line2D.new()
+	line.points = PackedVector2Array([
+		-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y),
+	])
+	line.closed = true
+	line.width = 2.0
+	line.default_color = Color(1.0, 1.0, 1.0, 0.16)
+	line.antialiased = true
+	_slot_layer.add_child(line)
+	return line
+
+
+# centred caption under a pile ("Talon", "Discard 12", ...)
+func _make_caption() -> Label:
+	var label := _make_label(Vector2.ZERO, 18)
+	label.size.x = 220
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.5))
+	return label
+
+
+func _place_slots() -> void:
+	_talon_marker.position = talon_pos
+	_discard_marker.position = discard_pos
+	_talon_label.position = talon_pos \
+		+ Vector2(-_talon_label.size.x * 0.5, talon_card_height * 0.5 + 8.0)
+	_discard_label.position = discard_pos \
+		+ Vector2(-_discard_label.size.x * 0.5, discard_card_height * 0.5 + 8.0)
 
 
 func _make_button(text: String, pos: Vector2, on_pressed: Callable) -> Button:
@@ -688,10 +732,9 @@ func _resync() -> void:
 		talon_pos, talon_card_height, -1)
 	_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
 		discard_pos, discard_card_height, 1)
-	_talon_label.text = "talon  %d" % game.talon_count()
-	_talon_label.visible = game.talon_count() > 0
-	_discard_label.text = "discard  %d" % game.discard.size()
-	_discard_label.visible = game.discard.size() > 0
+	_place_slots()
+	_talon_label.text = "Talon  %d" % game.talon_count() if game.talon_count() > 0 else "Talon"
+	_discard_label.text = "Discard  %d" % game.discard.size() if game.discard.size() > 0 else "Discard"
 	_sync_opponents()
 
 	_rebuild_input_targets()

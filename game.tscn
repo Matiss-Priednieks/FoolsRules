@@ -4,3 +4,5 @@
 
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
+talon_pos = Vector2(250, 184.805)
+discard_pos = Vector2(1690, 805.455)
