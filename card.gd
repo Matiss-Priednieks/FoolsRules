@@ -34,8 +34,6 @@ func setup(card_suit: String, card_rank: int, is_face_up := true) -> void:
 
 
 func _refresh_texture() -> void:
-	if not is_node_ready():
-		return
 	texture = load(_texture_path())
 
 
