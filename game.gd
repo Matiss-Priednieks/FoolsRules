@@ -21,6 +21,9 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 1.5, 0.01) var clear_beat := 0.34   ## hold after the table clears
 @export_range(0.0, 1.5, 0.01) var refill_anim := 0.26  ## a card flying from the talon into a hand
 @export_range(0.0, 1.5, 0.01) var refill_beat := 0.14  ## hold after each seat refills
+@export_range(0.0, 1.0, 0.01) var deal_fly := 0.24    ## opening deal: one card's flight from the talon
+@export_range(0.0, 0.5, 0.01) var deal_gap := 0.045   ## opening deal: gap between consecutive cards
+@export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
 
 @export_group("Card feel")
 @export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
@@ -268,8 +271,63 @@ func _new_game() -> void:
 	_move_pending = false
 	game = DurakGame.new(4, 0)
 	game.game_over.connect(_on_game_over)
-	_resync() # deal: every view spawns at the talon and fans out to its hand
-	_deal_burst(12) # rattle of the opening deal
+	_deal_out() # animate the deal, then settle + hand off to the bots
+
+
+## Counter-clockwise seat order (left -> top -> right -> home in screen terms),
+## so the human's own hand fills last.
+func _deal_order() -> Array[int]:
+	var order: Array[int] = []
+	for relative in [1, 2, 3, 0]:
+		order.append((_near_seat() + relative) % game.num_players)
+	return order
+
+
+## The engine has already dealt; this just animates the result before anyone
+## moves - each hand flown out of the talon a card at a time, seat by seat,
+## then _resync() settles the exact layout and the bots take over.
+func _deal_out() -> void:
+	var run_id := _game_id
+	_busy = true
+
+	if _headless:
+		_busy = false
+		_resync()
+		_run_bot_turns()
+		return
+
+	for label in _seat_labels:
+		label.text = ""
+	_sync_back_stack(_talon_stack, game.talon_count() - 1, talon_pos, talon_card_height, -1)
+	_place_slots()
+
+	for seat in _deal_order():
+		var hand: Array = game.hands[seat]
+		for i in hand.size():
+			if run_id != _game_id:
+				return
+			if seat == _near_seat():
+				var card: CardData = hand[i]
+				var view := _create_view(card) # spawns at the talon
+				_card_views[card] = view
+				view.z_index = 10 + i
+				_animate_to(view, _hand_slot_pos(i, hand.size()),
+					_hand_slot_angle(i, hand.size()),
+					_fit_scale(view, hand_card_height), deal_fly, 0.0)
+			else:
+				_opponent_backs.get_or_add(seat, [])
+				var back := _new_back(talon_pos, 4)
+				_opponent_backs[seat].append(back)
+				_animate_to(back, _opponent_slot_pos(seat, i, hand.size()), 0.0,
+					_fit_scale(back, opponent_card_height), deal_fly, 0.0)
+			_play_deal()
+			await _wait(deal_gap)
+		await _wait(deal_player_beat)
+
+	if run_id != _game_id:
+		return
+	_busy = false
+	_resync() # settle the exact layout, flip the trump out, unlock input
 	_run_bot_turns()
 
 
