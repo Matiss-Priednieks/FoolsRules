@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://c6tsah7bmdul5"
-path="res://.godot/imported/Kremlin Kourier II.ttf-9e3bb058e89d46bab0dfa9e4af64dbc8.fontdata"
+uid="uid://bqs3qxwomm6si"
+path="res://.godot/imported/Sonttak.ttf-86d26865c9ac0d3979bb5411ed8df0eb.fontdata"
 
 [deps]
 
-source_file="res://fonts/Kremlin Kourier II.ttf"
-dest_files=["res://.godot/imported/Kremlin Kourier II.ttf-9e3bb058e89d46bab0dfa9e4af64dbc8.fontdata"]
+source_file="res://fonts/Sonttak.ttf"
+dest_files=["res://.godot/imported/Sonttak.ttf-86d26865c9ac0d3979bb5411ed8df0eb.fontdata"]
 
 [params]
 

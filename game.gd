@@ -182,16 +182,18 @@ func _ready() -> void:
 	_new_game()
 
 
-# Kremlin Kourier II for every bit of on-screen text; the bold cut is wired
-# in for Button and used explicitly on the end-screen title.
+# Sonttak for every bit of on-screen text. It ships as one weight, so the
+# heavier face for Button / the end-screen title is synthesised.
 func _build_ui_theme() -> void:
 	_ui_theme = Theme.new()
-	var body: Font = load("res://fonts/Kremlin Kourier II.ttf")
-	_font_bold = load("res://fonts/Kremlin Kourier II Bold.ttf")
+	var body: Font = load("res://fonts/Sonttak.otf")
 	if body:
 		_ui_theme.default_font = body
-	if _font_bold:
-		_ui_theme.set_font("font", "Button", _font_bold)
+		var bold := FontVariation.new()
+		bold.base_font = body
+		bold.variation_embolden = 0.4
+		_font_bold = bold
+		_ui_theme.set_font("font", "Button", bold)
 
 
 func _make_label(pos: Vector2, font_size: int) -> Label:
