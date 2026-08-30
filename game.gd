@@ -28,6 +28,10 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.05, 1.0, 0.01) var hand_follow := 0.30 ## how fast hand cards ease to their slot
 @export_range(0.05, 1.0, 0.01) var drag_follow := 0.40 ## how fast a dragged card chases the cursor
 
+@export_group("Hand fan")
+@export_range(250.0, 5000.0, 10.0) var hand_fan_radius := 900.0 ## arc radius of the human hand; larger = flatter, smaller = deeper curve
+@export_range(24.0, 160.0, 1.0) var hand_card_spacing := 82.0 ## gap between adjacent hand cards along the arc
+
 @export_group("Card sizes (px tall)")
 @export_range(40.0, 320.0, 1.0) var hand_card_height := 200.0
 @export_range(40.0, 320.0, 1.0) var table_card_height := 140.0
@@ -87,7 +91,7 @@ var _game_id := 0                 # bumped per game; a stale coroutine bails on 
 var _turn_epoch := 0             # bumped when the human acts; the bot loop bails on mismatch
 var _busy := false                # an _apply_and_animate() is mid-flight
 var _waiting_for_human := false   # the human has at least one legal move right now
-var _hand_slots: Array = []       # [{view, card, home_pos, home_scale, playable}]
+var _hand_slots: Array = []       # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _drag := {}                   # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
@@ -638,7 +642,9 @@ func _process(_delta: float) -> void:
 	for slot in _hand_slots:
 		var view: Node2D = slot.view
 		var raised: bool = view == _hovered_view and slot.playable
-		var goal: Vector2 = slot.home_pos + (Vector2(0, -hover_raise) if raised else Vector2.ZERO)
+		# lift perpendicular to the fan so a tilted card rises straight off the arc
+		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
+		var goal: Vector2 = slot.home_pos + (lift if raised else Vector2.ZERO)
 		view.global_position = view.global_position.lerp(goal, hand_follow)
 		view.scale = view.scale.lerp(slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
 		view.z_index = 60 if view == _hovered_view else 0
@@ -671,10 +677,25 @@ func _seat_layout(seat: int) -> Dictionary:
 		_: return {origin = Vector2(1780, 540), vertical = true, label_offset = Vector2(-40, -170)}
 
 
+# The human hand is a fan: cards ride a circle of radius `hand_fan_radius`
+# whose centre sits that far below the seat origin, so the middle card stays
+# on the origin and the rest sweep out along the arc. A large radius flattens
+# the fan back toward a straight row.
+func _hand_fan_step(hand_size: int) -> float:
+	# arc-length spacing / radius = angle between adjacent cards (radians),
+	# with a clamp so big hands still fit across the screen
+	var spacing := minf(hand_card_spacing, 1100.0 / maxf(hand_size, 1))
+	return spacing / maxf(hand_fan_radius, 1.0)
+
+
+func _hand_slot_angle(index: int, hand_size: int) -> float:
+	return (index - (hand_size - 1) * 0.5) * _hand_fan_step(hand_size)
+
+
 func _hand_slot_pos(index: int, hand_size: int) -> Vector2:
-	var spacing := minf(64.0, 1000.0 / maxf(hand_size, 1))
-	var span := spacing * maxf(hand_size - 1, 0)
-	return _seat_layout(_near_seat()).origin + Vector2(-span * 0.5 + index * spacing, 0)
+	var pivot: Vector2 = _seat_layout(_near_seat()).origin + Vector2(0, hand_fan_radius)
+	var angle := _hand_slot_angle(index, hand_size)
+	return pivot + hand_fan_radius * Vector2(sin(angle), -cos(angle))
 
 
 func _opponent_slot_pos(seat: int, index: int, hand_size: int) -> Vector2:
@@ -705,7 +726,7 @@ func _face_up_layout() -> Array:
 	for i in hand.size():
 		layout.append({
 			card = hand[i], pos = _hand_slot_pos(i, hand.size()),
-			rotation = 0.0, height = hand_card_height, z = 10,
+			rotation = _hand_slot_angle(i, hand.size()), height = hand_card_height, z = 10,
 		})
 	var attack_count := game.table.size()
 	for i in attack_count:
@@ -926,6 +947,7 @@ func _rebuild_input_targets() -> void:
 		view.modulate.a = 1.0 if (can_play or playable.is_empty()) else 0.4
 		_hand_slots.append({
 			view = view, card = card, home_pos = _hand_slot_pos(i, hand.size()),
+			home_angle = _hand_slot_angle(i, hand.size()),
 			home_scale = Vector2.ONE * (hand_card_height / maxf(view.texture.get_height(), 1.0)),
 			playable = can_play,
 		})
