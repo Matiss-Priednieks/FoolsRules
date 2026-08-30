@@ -43,6 +43,14 @@ const BOARD_CENTER := Vector2(960, 540)
 		if crt:
 			crt.visible = value
 
+@export_group("Pixelate")
+@export var pixelate_enabled := true:
+	set(value):
+		pixelate_enabled = value
+		var px := get_node_or_null("Pixelate")
+		if px:
+			px.visible = value
+
 @export_group("Positions")
 @export var talon_pos := Vector2(250, 560)
 @export var discard_pos := Vector2(1690, 560)
@@ -95,6 +103,9 @@ func _ready() -> void:
 	var crt := get_node_or_null("CRT")
 	if crt:
 		crt.visible = crt_enabled and not _headless
+	var px := get_node_or_null("Pixelate")
+	if px:
+		px.visible = pixelate_enabled and not _headless
 
 	_slot_layer = Node2D.new()
 	add_child(_slot_layer) # added first -> drawn behind the cards

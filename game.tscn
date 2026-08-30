@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://game.gd" id="1_80nbo"]
 [ext_resource type="Shader" uid="uid://dbvkbbn3cjdux" path="res://crt.gdshader" id="2_crt"]
+[ext_resource type="Shader" path="res://pixel.gdshader" id="3_pixel"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
 shader = ExtResource("2_crt")
@@ -15,11 +16,29 @@ shader_parameter/vignette_amt = 0.3
 shader_parameter/flicker_amt = 0.02
 shader_parameter/brightness = 1.1
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_pixel"]
+shader = ExtResource("3_pixel")
+shader_parameter/pixel_size = 4.0
+shader_parameter/color_steps = 48
+shader_parameter/dither_amt = 0.0
+shader_parameter/saturation = 1.0
+
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
-crt_enabled = false
 talon_pos = Vector2(250, 150)
 discard_pos = Vector2(1690, 800)
+
+[node name="Pixelate" type="CanvasLayer" parent="."]
+layer = 120
+
+[node name="Screen" type="ColorRect" parent="Pixelate"]
+material = SubResource("ShaderMaterial_pixel")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 
 [node name="CRT" type="CanvasLayer" parent="." unique_id=1537960929]
 layer = 128
