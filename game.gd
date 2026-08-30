@@ -15,7 +15,16 @@ const TABLE_CARD_HEIGHT := 140.0
 const TALON_CARD_HEIGHT := 140.0
 const OPPONENT_CARD_HEIGHT := 118.0
 const DISCARD_CARD_HEIGHT := 130.0
-const MOVE_DURATION := 0.30
+const MOVE_DURATION := 0.34
+
+# animation pacing: <thing>_ANIM is the tween length, <thing>_BEAT is how long
+# the turn loop pauses on that phase before moving on
+const PLAY_ANIM := 0.30
+const PLAY_BEAT := 0.34
+const CLEAR_ANIM := 0.46
+const CLEAR_BEAT := 0.58
+const REFILL_ANIM := 0.28
+const REFILL_BEAT := 0.24
 
 const TALON_POS := Vector2(250, 560)
 const DISCARD_POS := Vector2(1690, 560)
@@ -49,7 +58,9 @@ var _discard_stack: Array[Sprite2D] = []
 
 # --- frame state ------------------------------------------------------------
 var _game_id := 0                 # bumped per game; a stale coroutine bails on mismatch
-var _waiting_for_human := false   # true when the only actor left is the human
+var _turn_epoch := 0             # bumped when the human acts; the bot loop bails on mismatch
+var _busy := false                # an _apply_and_animate() is mid-flight
+var _waiting_for_human := false   # the human has at least one legal move right now
 var _hand_slots: Array = []       # [{view, card, home_pos, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _drag := {}                   # {view, card, home_pos, grab_offset} while dragging
@@ -157,6 +168,8 @@ func _build_end_screen() -> void:
 
 func _new_game() -> void:
 	_game_id += 1
+	_turn_epoch += 1
+	_busy = false
 	game = DurakGame.new(4, 0)
 	game.game_over.connect(_on_game_over)
 	_resync() # deal: every view spawns at the talon and fans out to its hand
@@ -222,30 +235,29 @@ func _show_end_screen(loser: int) -> void:
 
 # ---------------------------------------------------------------- bot turn loop
 
+## Keeps letting bots act, one at a time, until only the human can move (or the
+## game ends). Runs alongside the human: while it waits out `bot_delay` the
+## board is live, and a human move bumps `_turn_epoch`, which makes this loop
+## bail so a fresh one can start after that move's animation.
 func _run_bot_turns() -> void:
-	var running_for := _game_id
-	if game.is_finished():
-		return
-	var actors := game.players_to_act()
-	if actors.is_empty():
-		return
-	if human_seat >= 0 and actors.size() == 1 and actors[0] == human_seat:
-		return # nothing to do until the user acts
-
-	if bot_delay > 0.0:
-		await _wait(bot_delay)
-	else:
-		await get_tree().process_frame
-	if running_for != _game_id or game.is_finished():
-		return
-
-	var action: Dictionary = Bot.pick(game, human_seat)
-	if action.is_empty():
-		return
-	await _apply_and_animate(action)
-	if running_for != _game_id:
-		return
-	_run_bot_turns()
+	var run_id := _game_id
+	var epoch := _turn_epoch
+	while not game.is_finished():
+		if run_id != _game_id or epoch != _turn_epoch:
+			return
+		var action: Dictionary = Bot.pick(game, human_seat)
+		if action.is_empty():
+			return # only the human can move now
+		if bot_delay > 0.0:
+			await _wait(bot_delay) # the board stays live during this pause
+		else:
+			await get_tree().process_frame
+		if run_id != _game_id or epoch != _turn_epoch or game.is_finished():
+			return
+		if _busy: # a human move slipped in and is animating; re-pick next loop
+			await _wait(0.05)
+			continue
+		await _apply_and_animate(action)
 
 
 # ---------------------------------------------------------------- action + animation
@@ -256,6 +268,7 @@ func _run_bot_turns() -> void:
 ## turn order. Ends by settling every sprite to the true final layout.
 func _apply_and_animate(action: Dictionary) -> void:
 	var run_id := _game_id
+	_busy = true
 	_waiting_for_human = false
 	var before := _snapshot()
 	var bout_attacker: int = game.attacker
@@ -291,16 +304,19 @@ func _apply_and_animate(action: Dictionary) -> void:
 			var seat := now.substr(5).to_int()
 			refilled.get_or_add(seat, [] as Array[CardData]).append(card)
 
-	# 1. the played card slides onto the table
+	# 1. the played card slides onto the table, from whoever's hand held it
 	for card in played:
 		var view: Sprite2D = _card_views.get(card)
 		if view == null:
 			view = _create_view(card)
 			_card_views[card] = view
+			var origin_seat := _zone_seat(before.get(card, ""))
+			if origin_seat >= 0:
+				view.position = _seat_layout(origin_seat).origin
 		var slot := _table_target_for(card)
-		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, TABLE_CARD_HEIGHT), 0.24, 0.0)
+		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, TABLE_CARD_HEIGHT), PLAY_ANIM, 0.0)
 	if not played.is_empty():
-		await _wait(0.26)
+		await _wait(PLAY_BEAT)
 		if run_id != _game_id: return
 
 	# 2. clear the table
@@ -309,7 +325,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 			_animate_view_away(card)
 		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
 			DISCARD_POS, DISCARD_CARD_HEIGHT, 1)
-		await _wait(0.42)
+		await _wait(CLEAR_BEAT)
 		if run_id != _game_id: return
 	elif not taken.is_empty():
 		if taker == human_seat:
@@ -317,12 +333,12 @@ func _apply_and_animate(action: Dictionary) -> void:
 				var view: Sprite2D = _card_views.get(card)
 				if view != null:
 					_animate_to(view, _seat_layout(human_seat).origin, 0.0,
-						_fit_scale(view, HAND_CARD_HEIGHT), 0.34, 0.0)
+						_fit_scale(view, HAND_CARD_HEIGHT), CLEAR_ANIM, 0.0)
 		else:
 			for card in taken:
 				_animate_view_away(card)
 			_grow_opponent_backs(taker)
-		await _wait(0.42)
+		await _wait(CLEAR_BEAT)
 		if run_id != _game_id: return
 
 	# 3. refill from the talon, one seat at a time, in the engine's refill order
@@ -336,9 +352,10 @@ func _apply_and_animate(action: Dictionary) -> void:
 				_grow_opponent_backs(seat)
 			_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
 				TALON_POS, TALON_CARD_HEIGHT, -1)
-			await _wait(0.16)
+			await _wait(REFILL_BEAT)
 			if run_id != _game_id: return
 
+	_busy = false
 	if run_id != _game_id:
 		return
 	_resync() # 4. settle every sprite to the final layout and unlock input
@@ -349,6 +366,10 @@ func _wait(seconds: float) -> void:
 		await get_tree().process_frame
 	else:
 		await get_tree().create_timer(seconds).timeout
+
+
+func _zone_seat(zone: String) -> int:
+	return zone.substr(5).to_int() if zone.begins_with("hand:") else -1
 
 
 func _snapshot() -> Dictionary:
@@ -399,7 +420,7 @@ func _draw_into_hand(seat: int) -> void:
 		var view := _create_view(card) # spawns at the talon
 		_card_views[card] = view
 		_animate_to(view, _hand_slot_pos(i, hand.size()), 0.0,
-			_fit_scale(view, HAND_CARD_HEIGHT), 0.22, i * 0.03)
+			_fit_scale(view, HAND_CARD_HEIGHT), REFILL_ANIM, i * 0.04)
 
 
 func _grow_opponent_backs(seat: int) -> void:
@@ -413,7 +434,7 @@ func _grow_opponent_backs(seat: int) -> void:
 		backs.append(_new_back(TALON_POS, 4))
 	for i in backs.size():
 		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), 0.0,
-			_fit_scale(backs[i], OPPONENT_CARD_HEIGHT), 0.22, 0.0)
+			_fit_scale(backs[i], OPPONENT_CARD_HEIGHT), REFILL_ANIM, 0.0)
 
 
 func _fit_scale(view: Sprite2D, target_height: float) -> Vector2:
@@ -429,6 +450,9 @@ func _human_actions() -> Array:
 
 
 func _submit(action: Dictionary) -> void:
+	if _busy:
+		return # a move is already animating; ignore this one
+	_turn_epoch += 1 # pre-empt the bot loop so it doesn't act on top of us
 	_drag = {}
 	_hovered_view = null
 	await _apply_and_animate(action)
@@ -628,9 +652,9 @@ func _face_up_layout() -> Array:
 func _resync() -> void:
 	if game == null:
 		return
-	var actors := game.players_to_act()
-	_waiting_for_human = not game.is_finished() \
-		and actors.size() == 1 and actors[0] == human_seat
+	# input is live whenever the human has any move - even if bots can also act,
+	# so throw-ins can interleave instead of forcing a wait
+	_waiting_for_human = not _human_actions().is_empty()
 
 	var layout := _face_up_layout()
 	var shown := {}
@@ -708,9 +732,9 @@ func _animate_view_away(card: CardData) -> void:
 	_stop_tween(view)
 	var tween := create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tween.tween_property(view, "position", destination, 0.36)
-	tween.tween_property(view, "scale", view.scale * 0.6, 0.36)
-	tween.tween_property(view, "modulate:a", 0.0, 0.36)
+	tween.tween_property(view, "position", destination, CLEAR_ANIM)
+	tween.tween_property(view, "scale", view.scale * 0.6, CLEAR_ANIM)
+	tween.tween_property(view, "modulate:a", 0.0, CLEAR_ANIM)
 	tween.chain().tween_callback(view.queue_free)
 
 
