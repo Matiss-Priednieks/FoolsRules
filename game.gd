@@ -365,6 +365,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 			if origin_seat >= 0:
 				view.position = _seat_layout(origin_seat).origin
 		var slot := _table_target_for(card)
+		view.z_index = slot.z
 		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, table_card_height), play_anim, 0.0)
 	if not played.is_empty():
 		await _wait(play_beat)
@@ -456,10 +457,10 @@ func _table_target_for(card: CardData) -> Dictionary:
 	var count := game.table.size()
 	for i in count:
 		if game.table[i].attack == card:
-			return {pos = _table_slot_pos(i, count, false), angle = 0.0}
+			return {pos = _table_slot_pos(i, count, false), angle = 0.0, z = _table_z(i, false)}
 		if game.table[i].defense == card:
-			return {pos = _table_slot_pos(i, count, true), angle = 0.14}
-	return {pos = BOARD_CENTER, angle = 0.0} # bout already cleared; a brief flash at centre
+			return {pos = _table_slot_pos(i, count, true), angle = 0.14, z = _table_z(i, true)}
+	return {pos = BOARD_CENTER, angle = 0.0, z = 40} # bout already cleared; a brief flash at centre
 
 
 func _draw_into_hand(seat: int) -> void:
@@ -669,6 +670,12 @@ func _table_slot_pos(index: int, attack_count: int, is_defense: bool) -> Vector2
 	return base + (Vector2(30, 44) if is_defense else Vector2.ZERO)
 
 
+# z_index bands: trump under the deck (1) < talon/discard backs (5) < hand (10)
+# < table, where each defence sits one above the attack it beats
+func _table_z(index: int, is_defense: bool) -> int:
+	return 20 + index * 2 + (1 if is_defense else 0)
+
+
 func _face_up_layout() -> Array:
 	# every card that should currently be shown face up, with its target transform
 	var layout: Array = []
@@ -676,24 +683,24 @@ func _face_up_layout() -> Array:
 	for i in hand.size():
 		layout.append({
 			card = hand[i], pos = _hand_slot_pos(i, hand.size()),
-			rotation = 0.0, height = hand_card_height,
+			rotation = 0.0, height = hand_card_height, z = 10,
 		})
 	var attack_count := game.table.size()
 	for i in attack_count:
 		var pair: Dictionary = game.table[i]
 		layout.append({
 			card = pair.attack, pos = _table_slot_pos(i, attack_count, false),
-			rotation = 0.0, height = table_card_height,
+			rotation = 0.0, height = table_card_height, z = _table_z(i, false),
 		})
 		if pair.defense != null:
 			layout.append({
 				card = pair.defense, pos = _table_slot_pos(i, attack_count, true),
-				rotation = 0.14, height = table_card_height,
+				rotation = 0.14, height = table_card_height, z = _table_z(i, true),
 			})
 	if game.trump_card in game.deck:
 		layout.append({
 			card = game.trump_card, pos = talon_pos + Vector2(60, 0),
-			rotation = PI * 0.5, height = talon_card_height,
+			rotation = PI * 0.5, height = talon_card_height, z = 1,
 		})
 	return layout
 
@@ -719,6 +726,7 @@ func _resync() -> void:
 			_card_views[entry.card] = view
 			delay = spawned * 0.05
 			spawned += 1
+		view.z_index = entry.z
 		var target_scale: Vector2 = Vector2.ONE \
 			* (float(entry.height) / maxf(view.texture.get_height(), 1.0))
 		_animate_to(view, entry.pos, entry.rotation, target_scale, move_duration, delay)
