@@ -46,6 +46,13 @@ func _play_random_game(game_seed: int) -> Dictionary:
 			return {ok = false, steps = steps,
 				msg = "no legal action, phase=%d, not finished" % g.phase}
 
+		# bug signature: everything is beaten but the only move is the defender
+		# taking their own completed defense (attackers can't pass/throw in)
+		var only_self_take := pool.all(func(a): return a.type == "take")
+		if only_self_take and _unbeaten(g) == 0:
+			return {ok = false, steps = steps,
+				msg = "defender forced to take a fully-beaten table"}
+
 		var action: Dictionary = pool[randi() % pool.size()]
 		if not g.apply_action(action):
 			return {ok = false, steps = steps,
@@ -82,6 +89,14 @@ func _check_invariants(g: DurakGame) -> String:
 		if g.is_out[g.defender] or g.is_out[g.attacker]:
 			return "an out player is attacking/defending"
 	return ""
+
+
+func _unbeaten(g: DurakGame) -> int:
+	var n := 0
+	for pair in g.table:
+		if pair.defense == null:
+			n += 1
+	return n
 
 
 func _all_cards(g: DurakGame) -> Array:

@@ -80,20 +80,22 @@ func get_legal_actions(player: int) -> Array[Dictionary]:
 		return actions
 
 	# attacking side: everyone who is not the defender
-	if phase == Phase.ATTACK or phase == Phase.TAKING:
-		var can_add := _can_add_attack(player)
-		if table.is_empty():
-			if player == attacker and can_add:
-				for c in hands[player]:
-					actions.append({type = "attack", player = player, card = c})
-			return actions
-		if can_add:
-			var ranks := _table_ranks()
+	if table.is_empty():
+		# opening the bout: only the primary attacker, one card to start
+		if player == attacker and _can_add_attack(player):
 			for c in hands[player]:
-				if c.rank in ranks:
-					actions.append({type = "attack", player = player, card = c})
-		if not passed.has(player) and not hands[player].is_empty():
-			actions.append({type = "pass", player = player})
+				actions.append({type = "attack", player = player, card = c})
+		return actions
+
+	# bout in progress (defender is beating cards off or taking): throw in a card
+	# of a rank already on the table, or pass
+	if _can_add_attack(player):
+		var ranks := _table_ranks()
+		for c in hands[player]:
+			if c.rank in ranks:
+				actions.append({type = "attack", player = player, card = c})
+	if not passed.has(player) and not hands[player].is_empty():
+		actions.append({type = "pass", player = player})
 	return actions
 
 
