@@ -122,10 +122,6 @@ var _fan_streams: Array[AudioStream] = [] # card_fan_1..3: a pile picked up / sw
 var _voices: Array[AudioStreamPlayer] = []
 var _voice_next := 0
 
-# --- fonts --------------------------------------------------------------
-var _ui_theme: Theme
-var _font_bold: Font
-
 
 func _ready() -> void:
 	_headless = DisplayServer.get_name() == "headless"
@@ -150,11 +146,6 @@ func _ready() -> void:
 			# yet at this point.
 			_run_client_autoplay.call_deferred()
 
-	_build_ui_theme()
-	_ui_root.theme = _ui_theme # every Control under it inherits from here
-	if _font_bold:
-		_end_title.add_theme_font_override("font", _font_bold)
-
 	var crt := get_node_or_null("CRT")
 	if crt:
 		crt.visible = crt_enabled and not _headless
@@ -178,20 +169,6 @@ func _ready() -> void:
 
 	RenderingServer.set_default_clear_color(Color(0.05, 0.22, 0.12))
 	_new_game()
-
-
-# dm-serif for every bit of on-screen text. One weight, so the heavier face
-# for Button / the end-screen title is synthesised.
-func _build_ui_theme() -> void:
-	_ui_theme = Theme.new()
-	var body: Font = load("res://fonts/dm-serif.ttf")
-	if body:
-		_ui_theme.default_font = body
-		var bold := FontVariation.new()
-		bold.base_font = body
-		bold.variation_embolden = 0.4
-		_font_bold = bold
-		_ui_theme.set_font("font", "Button", bold)
 
 
 # a card-footprint outline that marks a pile spot even when it is empty
