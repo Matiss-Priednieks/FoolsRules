@@ -2,7 +2,14 @@
 
 [ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://game.gd" id="1_80nbo"]
 [ext_resource type="Shader" uid="uid://dbvkbbn3cjdux" path="res://crt.gdshader" id="2_crt"]
-[ext_resource type="Shader" path="res://pixel.gdshader" id="3_pixel"]
+[ext_resource type="Shader" uid="uid://66rco2vfeeqa" path="res://pixel.gdshader" id="3_pixel"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_pixel"]
+shader = ExtResource("3_pixel")
+shader_parameter/pixel_size = 2.0
+shader_parameter/color_steps = 48
+shader_parameter/dither_amt = 0.0
+shader_parameter/saturation = 1.0
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
 shader = ExtResource("2_crt")
@@ -16,22 +23,15 @@ shader_parameter/vignette_amt = 0.3
 shader_parameter/flicker_amt = 0.02
 shader_parameter/brightness = 1.1
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_pixel"]
-shader = ExtResource("3_pixel")
-shader_parameter/pixel_size = 4.0
-shader_parameter/color_steps = 48
-shader_parameter/dither_amt = 0.0
-shader_parameter/saturation = 1.0
-
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
 talon_pos = Vector2(250, 150)
 discard_pos = Vector2(1690, 800)
 
-[node name="Pixelate" type="CanvasLayer" parent="."]
+[node name="Pixelate" type="CanvasLayer" parent="." unique_id=1139313725]
 layer = 120
 
-[node name="Screen" type="ColorRect" parent="Pixelate"]
+[node name="Screen" type="ColorRect" parent="Pixelate" unique_id=13268362]
 material = SubResource("ShaderMaterial_pixel")
 anchors_preset = 15
 anchor_right = 1.0
@@ -51,3 +51,153 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="SlotLayer" type="Node2D" parent="."]
+
+[node name="TalonMarker" type="Line2D" parent="SlotLayer"]
+closed = true
+width = 2.0
+default_color = Color(1, 1, 1, 0.16)
+antialiased = true
+
+[node name="DiscardMarker" type="Line2D" parent="SlotLayer"]
+closed = true
+width = 2.0
+default_color = Color(1, 1, 1, 0.16)
+antialiased = true
+
+[node name="CardLayer" type="Node2D" parent="."]
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Root" type="Control" parent="UI"]
+mouse_filter = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="StatusLabel" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+position = Vector2(24, 18)
+theme_override_font_sizes/font_size = 22
+
+[node name="TalonLabel" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+size = Vector2(220, 8)
+theme_override_colors/font_color = Color(1, 1, 1, 0.5)
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 1
+text = "Talon"
+
+[node name="DiscardLabel" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+size = Vector2(220, 8)
+theme_override_colors/font_color = Color(1, 1, 1, 0.5)
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 1
+text = "Discard"
+
+[node name="SeatLabel0" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 18
+
+[node name="SeatLabel1" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 18
+
+[node name="SeatLabel2" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 18
+
+[node name="SeatLabel3" type="Label" parent="UI/Root"]
+layout_mode = 0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 18
+
+[node name="ConfirmButton" type="Button" parent="UI/Root"]
+layout_mode = 0
+visible = false
+position = Vector2(1520, 610)
+size = Vector2(150, 60)
+focus_mode = 0
+theme_override_font_sizes/font_size = 22
+text = "Confirm"
+
+[node name="TakeButton" type="Button" parent="UI/Root"]
+layout_mode = 0
+visible = false
+position = Vector2(1520, 690)
+size = Vector2(150, 60)
+focus_mode = 0
+theme_override_font_sizes/font_size = 22
+text = "Take"
+
+[node name="PassButton" type="Button" parent="UI/Root"]
+layout_mode = 0
+visible = false
+position = Vector2(1520, 770)
+size = Vector2(150, 60)
+focus_mode = 0
+theme_override_font_sizes/font_size = 22
+text = "Pass"
+
+[node name="TranslateStrip" type="ColorRect" parent="UI/Root"]
+layout_mode = 0
+visible = false
+position = Vector2(660, 232)
+size = Vector2(600, 96)
+mouse_filter = 2
+color = Color(0.9, 0.75, 0.2, 0.22)
+
+[node name="StripLabel" type="Label" parent="UI/Root/TranslateStrip"]
+layout_mode = 0
+mouse_filter = 2
+size = Vector2(600, 96)
+theme_override_font_sizes/font_size = 20
+horizontal_alignment = 1
+vertical_alignment = 1
+text = "▲  drop here — pass the attack on"
+
+[node name="EndScreen" type="ColorRect" parent="UI/Root"]
+layout_mode = 0
+visible = false
+size = Vector2(1920, 1080)
+color = Color(0.03, 0.05, 0.04, 0.78)
+
+[node name="EndTitle" type="Label" parent="UI/Root/EndScreen"]
+layout_mode = 0
+position = Vector2(0, 300)
+size = Vector2(1920, 80)
+theme_override_font_sizes/font_size = 56
+horizontal_alignment = 1
+
+[node name="EndStandings" type="Label" parent="UI/Root/EndScreen"]
+layout_mode = 0
+position = Vector2(0, 430)
+size = Vector2(1920, 220)
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
+[node name="AgainButton" type="Button" parent="UI/Root/EndScreen"]
+layout_mode = 0
+position = Vector2(800, 700)
+size = Vector2(320, 72)
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "Play again  (Space)"
+
+[node name="MenuButton" type="Button" parent="UI/Root/EndScreen"]
+layout_mode = 0
+position = Vector2(800, 786)
+size = Vector2(320, 72)
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "Main menu"

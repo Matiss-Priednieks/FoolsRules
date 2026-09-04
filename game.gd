@@ -72,24 +72,27 @@ const BOARD_CENTER := Vector2(960, 540)
 
 var game: DurakGame
 
-# --- persistent scene nodes ----------------------------------------------------
-var _slot_layer: Node2D # empty-pile outline markers, drawn behind the cards
-var _talon_marker: Line2D
-var _discard_marker: Line2D
-var _card_layer: Node2D # every card / back sprite lives here
-var _ui_layer: CanvasLayer
-var _status_label: Label # top line: trump / phase / pile counts
-var _take_button: Button
-var _pass_button: Button
-var _confirm_button: Button
-var _translate_strip: ColorRect # "drop here to pass the attack on"
-var _talon_label: Label
-var _discard_label: Label
-var _seat_labels: Array[Label] = []
-var _end_screen: ColorRect
-var _end_title: Label
-var _end_standings: Label
-var _again_button: Button
+# --- persistent scene nodes (see game.tscn for the actual layout) ---------------
+@onready var _slot_layer: Node2D = $SlotLayer # empty-pile outline markers, drawn behind the cards
+@onready var _talon_marker: Line2D = $SlotLayer/TalonMarker
+@onready var _discard_marker: Line2D = $SlotLayer/DiscardMarker
+@onready var _card_layer: Node2D = $CardLayer # every card / back sprite lives here
+@onready var _ui_layer: CanvasLayer = $UI
+@onready var _ui_root: Control = $UI/Root # every Control below hangs off this one themed node
+@onready var _status_label: Label = $UI/Root/StatusLabel # top line: trump / phase / pile counts
+@onready var _talon_label: Label = $UI/Root/TalonLabel
+@onready var _discard_label: Label = $UI/Root/DiscardLabel
+@onready var _seat_labels: Array[Label] = [
+	$UI/Root/SeatLabel0, $UI/Root/SeatLabel1, $UI/Root/SeatLabel2, $UI/Root/SeatLabel3]
+@onready var _confirm_button: Button = $UI/Root/ConfirmButton
+@onready var _take_button: Button = $UI/Root/TakeButton
+@onready var _pass_button: Button = $UI/Root/PassButton
+@onready var _translate_strip: ColorRect = $UI/Root/TranslateStrip # "drop here to pass the attack on"
+@onready var _end_screen: ColorRect = $UI/Root/EndScreen
+@onready var _end_title: Label = $UI/Root/EndScreen/EndTitle
+@onready var _end_standings: Label = $UI/Root/EndScreen/EndStandings
+@onready var _again_button: Button = $UI/Root/EndScreen/AgainButton
+@onready var _menu_button: Button = $UI/Root/EndScreen/MenuButton
 
 # --- view bookkeeping --------------------------------------------------------
 var _card_views: Dictionary = {} # CardData   -> Sprite2D (one per face-up card)
@@ -146,6 +149,9 @@ func _ready() -> void:
 			_run_client_autoplay.call_deferred()
 
 	_build_ui_theme()
+	_ui_root.theme = _ui_theme # every Control under it inherits from here
+	if _font_bold:
+		_end_title.add_theme_font_override("font", _font_bold)
 
 	var crt := get_node_or_null("CRT")
 	if crt:
@@ -154,46 +160,18 @@ func _ready() -> void:
 	if px:
 		px.visible = pixelate_enabled and not _headless
 
-	_slot_layer = Node2D.new()
-	add_child(_slot_layer) # added first -> drawn behind the cards
-	_talon_marker = _make_slot_marker(talon_card_height)
-	_discard_marker = _make_slot_marker(discard_card_height)
-	_card_layer = Node2D.new()
-	add_child(_card_layer)
-	_ui_layer = CanvasLayer.new()
-	add_child(_ui_layer)
-
-	_status_label = _make_label(Vector2(24, 18), 22)
-	_talon_label = _make_caption()
-	_discard_label = _make_caption()
-	_talon_label.text = "Talon"
-	_discard_label.text = "Discard"
+	_set_slot_marker_points(_talon_marker, talon_card_height)
+	_set_slot_marker_points(_discard_marker, discard_card_height)
 	_place_slots()
-	for _i in 4:
-		_seat_labels.append(_make_label(Vector2.ZERO, 18))
-
-	_confirm_button = _make_button("Confirm", Vector2(1520, 610), _on_confirm)
-	_take_button = _make_button("Take", Vector2(1520, 690), _on_take)
-	_pass_button = _make_button("Pass", Vector2(1520, 770), _on_pass)
-
-	_translate_strip = ColorRect.new()
-	_translate_strip.theme = _ui_theme
-	_translate_strip.color = Color(0.9, 0.75, 0.2, 0.22)
+	# translate_strip_rect is a tunable export, not baked into the scene
 	_translate_strip.position = translate_strip_rect.position
 	_translate_strip.size = translate_strip_rect.size
-	_translate_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_translate_strip.visible = false
-	var strip_label := Label.new()
-	strip_label.text = "▲  drop here — pass the attack on"
-	strip_label.size = translate_strip_rect.size
-	strip_label.add_theme_font_size_override("font_size", 20)
-	strip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	strip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	strip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_translate_strip.add_child(strip_label)
-	_ui_layer.add_child(_translate_strip)
 
-	_build_end_screen()
+	_confirm_button.pressed.connect(_on_confirm)
+	_take_button.pressed.connect(_on_take)
+	_pass_button.pressed.connect(_on_pass)
+	_again_button.pressed.connect(_restart)
+	_menu_button.pressed.connect(_to_menu)
 
 	RenderingServer.set_default_clear_color(Color(0.05, 0.22, 0.12))
 	_new_game()
@@ -213,39 +191,13 @@ func _build_ui_theme() -> void:
 		_ui_theme.set_font("font", "Button", bold)
 
 
-func _make_label(pos: Vector2, font_size: int) -> Label:
-	var label := Label.new()
-	label.position = pos
-	label.theme = _ui_theme
-	label.add_theme_font_size_override("font_size", font_size)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ui_layer.add_child(label)
-	return label
-
-
 # a card-footprint outline that marks a pile spot even when it is empty
-func _make_slot_marker(card_height: float) -> Line2D:
+func _set_slot_marker_points(marker: Line2D, card_height: float) -> void:
 	var w := card_height * (500.0 / 726.0)
 	var half := Vector2(w, card_height) * 0.5
-	var line := Line2D.new()
-	line.points = PackedVector2Array([
+	marker.points = PackedVector2Array([
 		- half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y),
 	])
-	line.closed = true
-	line.width = 2.0
-	line.default_color = Color(1.0, 1.0, 1.0, 0.16)
-	line.antialiased = true
-	_slot_layer.add_child(line)
-	return line
-
-
-# centred caption under a pile ("Talon", "Discard 12", ...)
-func _make_caption() -> Label:
-	var label := _make_label(Vector2.ZERO, 18)
-	label.size.x = 220
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.5))
-	return label
 
 
 func _place_slots() -> void:
@@ -255,64 +207,6 @@ func _place_slots() -> void:
 		+ Vector2(-_talon_label.size.x * 0.5, talon_card_height * 0.5 + 8.0)
 	_discard_label.position = discard_pos \
 		+ Vector2(-_discard_label.size.x * 0.5, discard_card_height * 0.5 + 8.0)
-
-
-func _make_button(text: String, pos: Vector2, on_pressed: Callable) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.position = pos
-	button.size = Vector2(150, 60)
-	button.theme = _ui_theme
-	button.focus_mode = Control.FOCUS_NONE
-	button.add_theme_font_size_override("font_size", 22)
-	button.pressed.connect(on_pressed)
-	button.visible = false
-	_ui_layer.add_child(button)
-	return button
-
-
-func _build_end_screen() -> void:
-	_end_screen = ColorRect.new()
-	_end_screen.theme = _ui_theme
-	_end_screen.color = Color(0.03, 0.05, 0.04, 0.78)
-	_end_screen.position = Vector2.ZERO
-	_end_screen.size = Vector2(1920, 1080)
-	_end_screen.visible = false
-	_ui_layer.add_child(_end_screen)
-
-	_end_title = Label.new()
-	_end_title.position = Vector2(0, 300)
-	_end_title.size = Vector2(1920, 80)
-	_end_title.add_theme_font_size_override("font_size", 56)
-	if _font_bold:
-		_end_title.add_theme_font_override("font", _font_bold)
-	_end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_end_screen.add_child(_end_title)
-
-	_end_standings = Label.new()
-	_end_standings.position = Vector2(0, 430)
-	_end_standings.size = Vector2(1920, 220)
-	_end_standings.add_theme_font_size_override("font_size", 28)
-	_end_standings.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_end_screen.add_child(_end_standings)
-
-	_again_button = Button.new()
-	_again_button.text = "Play again  (Space)"
-	_again_button.add_theme_font_size_override("font_size", 26)
-	_again_button.size = Vector2(320, 72)
-	_again_button.position = Vector2(BOARD_CENTER.x - 160, 700)
-	_again_button.focus_mode = Control.FOCUS_NONE
-	_again_button.pressed.connect(_restart)
-	_end_screen.add_child(_again_button)
-
-	var menu_button := Button.new()
-	menu_button.text = "Main menu"
-	menu_button.add_theme_font_size_override("font_size", 26)
-	menu_button.size = Vector2(320, 72)
-	menu_button.position = Vector2(BOARD_CENTER.x - 160, 786)
-	menu_button.focus_mode = Control.FOCUS_NONE
-	menu_button.pressed.connect(_to_menu)
-	_end_screen.add_child(menu_button)
 
 
 # ---------------------------------------------------------------- game lifecycle
