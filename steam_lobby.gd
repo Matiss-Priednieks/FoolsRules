@@ -13,8 +13,8 @@ extends Node
 
 const MAX_PLAYERS := 4
 
-# Steam ELobbyType: 0 private, 1 friends-only, 2 public, 3 invisible.
-const _LOBBY_FRIENDS := 1
+# Steam ELobbyType 2 == public. Lobbies are always Public so an invite code
+# (below) can resolve for someone who isn't a Steam friend.
 const _LOBBY_PUBLIC := 2
 
 # String keys used with Steam's setLobbyData/setLobbyMemberData. Lobby-data is
