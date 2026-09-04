@@ -13,6 +13,7 @@ var player_names: Array[String] = ["", "", "", ""]           ## display name per
 var seat_steam_id: Array[int] = [0, 0, 0, 0]                 ## per-seat Steam ID, 0 = bot
 var seat_peer_id: Array[int] = [0, 0, 0, 0]                  ## per-seat Godot multiplayer peer id (LAN test), 0 = bot
 var seed := 0                        ## shared DurakGame seed so every peer deals identically
+var pending_message := ""            ## one-shot notice for the menu to show after an unexpected return (e.g. "Lost connection to the host.")
 
 
 func configure_singleplayer() -> void:

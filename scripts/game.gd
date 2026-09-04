@@ -136,9 +136,11 @@ func _ready() -> void:
 		human_seat = -1 # plain headless run: the self-play smoke test
 	elif NetSession.active:
 		human_seat = NetSession.local_seat # launched from a multiplayer lobby or LAN test
-		print("[net] multiplayer game: seat=%d authority=%s peer=%s unique_id=%d" % [
+		print("[net] multiplayer game: seat=%d authority=%s peer=%s unique_id=%d status=%d" % [
 			human_seat, _is_authority(), multiplayer.multiplayer_peer,
-			multiplayer.get_unique_id()])
+			multiplayer.get_unique_id(),
+			multiplayer.multiplayer_peer.get_connection_status() if multiplayer.multiplayer_peer else -1])
+		SteamLobby.disconnected_unexpectedly.connect(_on_disconnected_unexpectedly)
 		if _headless:
 			# Neither a headless host nor a headless client has a UI to drag
 			# cards with, so both need a stand-in for OUR seat specifically -
@@ -275,6 +277,15 @@ func _to_menu() -> void:
 	if NetSession.active:
 		SteamLobby.leave() # no-op for a LAN test (never touched SteamLobby)
 		multiplayer.multiplayer_peer = null # tears down a LAN test's ENet peer too
+	NetSession.active = false
+	get_tree().change_scene_to_file("res://scenes/menu.tscn")
+
+
+## The host vanished (or the RPC connection died) mid-match - bail out instead
+## of sitting there frozen with no feedback. SteamLobby.leave() already ran by
+## the time this signal fires.
+func _on_disconnected_unexpectedly(reason: String) -> void:
+	NetSession.pending_message = reason
 	NetSession.active = false
 	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 

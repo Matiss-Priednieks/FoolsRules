@@ -85,6 +85,9 @@ func _ready() -> void:
 	SteamLobby.game_starting.connect(_on_game_starting)
 
 	_goto(Screen.MAIN)
+	if NetSession.pending_message != "":
+		_flash(NetSession.pending_message)
+		NetSession.pending_message = ""
 
 
 func _process(_delta: float) -> void:

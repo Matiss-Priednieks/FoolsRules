@@ -35,6 +35,11 @@ signal members_updated()
 signal browse_updated()
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }
 signal game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int)
+## The RPC connection to the host died (or never truly formed) after the match
+## already started - a client-only signal (MultiplayerAPI.server_disconnected
+## never fires on the host). game.gd listens for this to bail out gracefully
+## instead of sitting frozen with no feedback.
+signal disconnected_unexpectedly(reason: String)
 
 var in_lobby := false
 var is_host := false
@@ -287,6 +292,13 @@ func _start_peer(as_host: bool) -> void:
 	if not ClassDB.class_exists("SteamMultiplayerPeer"):
 		return
 	_peer = ClassDB.instantiate("SteamMultiplayerPeer")
+	# Direct P2P between two real machines routinely fails to punch through NAT/
+	# firewalls even though the peer object itself is created successfully -
+	# the connection just never actually completes, and every later RPC call
+	# errors as "not connected". Steam's relay network (SDR) is the fallback for
+	# exactly that; it has to be turned on before the connection attempt starts.
+	if _peer.has_method("set_server_relay"):
+		_peer.set_server_relay(true)
 	var err := OK
 	if as_host:
 		err = _peer.host_with_lobby(lobby_id) if _peer.has_method("host_with_lobby") else _peer.create_host(0)
@@ -297,6 +309,19 @@ func _start_peer(as_host: bool) -> void:
 		_peer = null
 		return
 	multiplayer.multiplayer_peer = _peer
+	print("[Lobby] peer started (%s), status=%d" % ["host" if as_host else "client", _peer.get_connection_status()])
+	multiplayer.peer_connected.connect(func(id): print("[Lobby] peer_connected: %d" % id))
+	multiplayer.peer_disconnected.connect(func(id): print("[Lobby] peer_disconnected: %d" % id))
+	multiplayer.connection_failed.connect(func(): print("[Lobby] connection_failed"))
+	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+
+func _on_server_disconnected() -> void:
+	push_warning("[Lobby] lost connection to the host")
+	var was_in_lobby := in_lobby
+	leave()
+	if was_in_lobby:
+		disconnected_unexpectedly.emit("Lost connection to the host.")
 
 
 func _rebuild_members() -> void:
