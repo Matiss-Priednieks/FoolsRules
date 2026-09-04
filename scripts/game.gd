@@ -1315,6 +1315,10 @@ func _rebuild_input_targets() -> void:
 		# play at all (not your turn, or take/pass only) the whole hand dims, so
 		# a bright hand always means "you can act here"
 		view.modulate.a = 1.0 if can_play else 0.4
+		# the red strike-through is stronger than dimming alone, so it's reserved
+		# for genuine "your move, but not with this card" moments - not shown when
+		# there's nothing to do at all (_waiting_for_human false)
+		view.set_invalid(_waiting_for_human and not can_play)
 		_hand_slots.append({
 			view = view, card = card, home_pos = _hand_slot_pos(i, hand.size()),
 			home_angle = _hand_slot_angle(i, hand.size()),
