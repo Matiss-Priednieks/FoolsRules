@@ -13,22 +13,22 @@ const BOARD_CENTER := Vector2(960, 540)
 @export var human_seat := 0 ## -1 = watch mode (every seat is a bot)
 
 @export_group("Pacing (seconds)")
-@export_range(0.0, 3.0, 0.05) var bot_delay := 0.7  ## pause before each bot move; the board stays live during it
+@export_range(0.0, 3.0, 0.05) var bot_delay := 0.7 ## pause before each bot move; the board stays live during it
 @export_range(0.0, 1.5, 0.01) var move_duration := 0.34 ## generic settle tween
-@export_range(0.0, 1.5, 0.01) var play_anim := 0.30    ## played card sliding onto the table
-@export_range(0.0, 1.5, 0.01) var play_beat := 0.34    ## hold after a card is played
-@export_range(0.0, 1.5, 0.01) var clear_anim := 0.40   ## cards leaving the table (to discard / into a hand)
-@export_range(0.0, 1.5, 0.01) var clear_beat := 0.34   ## hold after the table clears
-@export_range(0.0, 1.5, 0.01) var refill_anim := 0.26  ## a card flying from the talon into a hand
-@export_range(0.0, 1.5, 0.01) var refill_beat := 0.14  ## hold after each seat refills
-@export_range(0.0, 1.0, 0.01) var deal_fly := 0.24    ## opening deal: one card's flight from the talon
-@export_range(0.0, 0.5, 0.01) var deal_gap := 0.045   ## opening deal: gap between consecutive cards
+@export_range(0.0, 1.5, 0.01) var play_anim := 0.30 ## played card sliding onto the table
+@export_range(0.0, 1.5, 0.01) var play_beat := 0.34 ## hold after a card is played
+@export_range(0.0, 1.5, 0.01) var clear_anim := 0.40 ## cards leaving the table (to discard / into a hand)
+@export_range(0.0, 1.5, 0.01) var clear_beat := 0.34 ## hold after the table clears
+@export_range(0.0, 1.5, 0.01) var refill_anim := 0.26 ## a card flying from the talon into a hand
+@export_range(0.0, 1.5, 0.01) var refill_beat := 0.14 ## hold after each seat refills
+@export_range(0.0, 1.0, 0.01) var deal_fly := 0.24 ## opening deal: one card's flight from the talon
+@export_range(0.0, 0.5, 0.01) var deal_gap := 0.045 ## opening deal: gap between consecutive cards
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
 
 @export_group("Card feel")
 @export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
-@export_range(1.0, 1.6, 0.01) var hover_scale := 1.12  ## size multiplier while hovered
-@export_range(0.0, 25.0, 0.5) var hover_tilt := 8.0    ## deg a hovered card leans toward the cursor (Balatro-ish)
+@export_range(1.0, 1.6, 0.01) var hover_scale := 1.12 ## size multiplier while hovered
+@export_range(0.0, 25.0, 0.5) var hover_tilt := 8.0 ## deg a hovered card leans toward the cursor (Balatro-ish)
 @export_range(0.05, 1.0, 0.01) var hand_follow := 0.30 ## how fast hand cards ease to their slot
 @export_range(0.05, 1.0, 0.01) var drag_follow := 0.40 ## how fast a dragged card chases the cursor
 
@@ -73,45 +73,46 @@ const BOARD_CENTER := Vector2(960, 540)
 var game: DurakGame
 
 # --- persistent scene nodes ----------------------------------------------------
-var _slot_layer: Node2D          # empty-pile outline markers, drawn behind the cards
+var _slot_layer: Node2D # empty-pile outline markers, drawn behind the cards
 var _talon_marker: Line2D
 var _discard_marker: Line2D
-var _card_layer: Node2D          # every card / back sprite lives here
+var _card_layer: Node2D # every card / back sprite lives here
 var _ui_layer: CanvasLayer
-var _status_label: Label         # top line: trump / phase / pile counts
+var _status_label: Label # top line: trump / phase / pile counts
 var _take_button: Button
 var _pass_button: Button
 var _confirm_button: Button
-var _translate_strip: ColorRect  # "drop here to pass the attack on"
+var _translate_strip: ColorRect # "drop here to pass the attack on"
 var _talon_label: Label
 var _discard_label: Label
 var _seat_labels: Array[Label] = []
 var _end_screen: ColorRect
 var _end_title: Label
 var _end_standings: Label
+var _again_button: Button
 
 # --- view bookkeeping --------------------------------------------------------
-var _card_views: Dictionary = {}      # CardData   -> Sprite2D (one per face-up card)
-var _opponent_backs: Dictionary = {}  # seat (int) -> Array[Sprite2D]
+var _card_views: Dictionary = {} # CardData   -> Sprite2D (one per face-up card)
+var _opponent_backs: Dictionary = {} # seat (int) -> Array[Sprite2D]
 var _talon_stack: Array[Sprite2D] = []
 var _discard_stack: Array[Sprite2D] = []
 
 # --- frame state ------------------------------------------------------------
-var _game_id := 0                 # bumped per game; a stale coroutine bails on mismatch
-var _turn_epoch := 0             # bumped when the human acts; the bot loop bails on mismatch
-var _busy := false                # an _apply_and_animate() is mid-flight
-var _waiting_for_human := false   # the human has at least one legal move right now
-var _move_pending := false        # human has laid ≥1 card this turn, not yet released to the bots
-var _hand_slots: Array = []       # [{view, card, home_pos, home_angle, home_scale, playable}]
+var _game_id := 0 # bumped per game; a stale coroutine bails on mismatch
+var _turn_epoch := 0 # bumped when the human acts; the bot loop bails on mismatch
+var _busy := false # an _apply_and_animate() is mid-flight
+var _waiting_for_human := false # the human has at least one legal move right now
+var _move_pending := false # human has laid ≥1 card this turn, not yet released to the bots
+var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
-var _drag := {}                   # {view, card, home_pos, grab_offset} while dragging
+var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
 
 # --- audio ----------------------------------------------------------------
 const AUDIO_VOICES := 14
-var _deal_streams: Array[AudioStream] = []  # deal_1..9: one card moving
-var _fan_streams: Array[AudioStream] = []   # card_fan_1..3: a pile picked up / swept to discard
+var _deal_streams: Array[AudioStream] = [] # deal_1..9: one card moving
+var _fan_streams: Array[AudioStream] = [] # card_fan_1..3: a pile picked up / swept to discard
 var _voices: Array[AudioStreamPlayer] = []
 var _voice_next := 0
 
@@ -127,6 +128,8 @@ func _ready() -> void:
 		human_seat = -1 # let the headless smoke test self-play
 	else:
 		_init_audio()
+		if NetSession.active:
+			human_seat = NetSession.local_seat # launched from a multiplayer lobby
 
 	_build_ui_theme()
 
@@ -212,7 +215,7 @@ func _make_slot_marker(card_height: float) -> Line2D:
 	var half := Vector2(w, card_height) * 0.5
 	var line := Line2D.new()
 	line.points = PackedVector2Array([
-		-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y),
+		- half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y),
 	])
 	line.closed = true
 	line.width = 2.0
@@ -279,14 +282,23 @@ func _build_end_screen() -> void:
 	_end_standings.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_end_screen.add_child(_end_standings)
 
-	var again_button := Button.new()
-	again_button.text = "Play again  (Space)"
-	again_button.add_theme_font_size_override("font_size", 26)
-	again_button.size = Vector2(320, 72)
-	again_button.position = Vector2(BOARD_CENTER.x - 160, 700)
-	again_button.focus_mode = Control.FOCUS_NONE
-	again_button.pressed.connect(_restart)
-	_end_screen.add_child(again_button)
+	_again_button = Button.new()
+	_again_button.text = "Play again  (Space)"
+	_again_button.add_theme_font_size_override("font_size", 26)
+	_again_button.size = Vector2(320, 72)
+	_again_button.position = Vector2(BOARD_CENTER.x - 160, 700)
+	_again_button.focus_mode = Control.FOCUS_NONE
+	_again_button.pressed.connect(_restart)
+	_end_screen.add_child(_again_button)
+
+	var menu_button := Button.new()
+	menu_button.text = "Main menu"
+	menu_button.add_theme_font_size_override("font_size", 26)
+	menu_button.size = Vector2(320, 72)
+	menu_button.position = Vector2(BOARD_CENTER.x - 160, 786)
+	menu_button.focus_mode = Control.FOCUS_NONE
+	menu_button.pressed.connect(_to_menu)
+	_end_screen.add_child(menu_button)
 
 
 # ---------------------------------------------------------------- game lifecycle
@@ -360,7 +372,17 @@ func _deal_out() -> void:
 	_run_bot_turns()
 
 
+func _to_menu() -> void:
+	if NetSession.active:
+		SteamLobby.leave()
+	NetSession.active = false
+	get_tree().change_scene_to_file("res://menu.tscn")
+
+
 func _restart() -> void:
+	if NetSession.active:
+		_to_menu() # no synced redeal yet; bail to the lobby browser
+		return
 	_end_screen.visible = false
 	for view in _card_views.values():
 		if is_instance_valid(view):
@@ -897,7 +919,7 @@ func _seat_layout(seat: int) -> Dictionary:
 	var relative := (seat - _near_seat() + game.num_players) % game.num_players
 	match relative:
 		0: return {origin = Vector2(960, 965), vertical = false, facing = 0.0, label_offset = Vector2(-45, -150)}
-		1: return {origin = Vector2(150, 540), vertical = true, facing = -PI / 2.0, label_offset = Vector2(-40, -170)}
+		1: return {origin = Vector2(150, 540), vertical = true, facing = - PI / 2.0, label_offset = Vector2(-40, -170)}
 		2: return {origin = Vector2(960, 120), vertical = false, facing = 0.0, label_offset = Vector2(-45, 90)}
 		_: return {origin = Vector2(1770, 540), vertical = true, facing = PI / 2.0, label_offset = Vector2(-40, -170)}
 
