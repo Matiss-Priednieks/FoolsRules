@@ -84,6 +84,7 @@ var game: DurakGame
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
 @onready var _seat_labels: Array[Label] = [
 	$UI/Root/SeatLabel0, $UI/Root/SeatLabel1, $UI/Root/SeatLabel2, $UI/Root/SeatLabel3]
+@onready var _hand_sort_button: Button = $UI/Root/HandSortButton
 @onready var _confirm_button: Button = $UI/Root/ConfirmButton
 @onready var _take_button: Button = $UI/Root/TakeButton
 @onready var _pass_button: Button = $UI/Root/PassButton
@@ -112,6 +113,7 @@ var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten at
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
+var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
 const AUDIO_VOICES := 14
@@ -167,6 +169,7 @@ func _ready() -> void:
 	_translate_strip.position = translate_strip_rect.position
 	_translate_strip.size = translate_strip_rect.size
 
+	_hand_sort_button.pressed.connect(_on_hand_sort_pressed)
 	_confirm_button.pressed.connect(_on_confirm)
 	_take_button.pressed.connect(_on_take)
 	_pass_button.pressed.connect(_on_pass)
@@ -880,6 +883,15 @@ func _on_pass() -> void:
 			return
 
 
+## Purely a local display preference - never touches game.hands, so it can't
+## affect legality, animation, or (in multiplayer) what gets sent over the wire.
+func _on_hand_sort_pressed() -> void:
+	_hand_sort = "suit" if _hand_sort == "rank" else "rank"
+	_hand_sort_button.text = "Sort: %s" % _hand_sort.capitalize()
+	if not _busy:
+		_resync() # re-fan the hand right away; otherwise the next _resync() picks it up
+
+
 # ---------------------------------------------------------------- drag & drop
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1053,6 +1065,21 @@ func _hand_slot_pos(index: int, hand_size: int) -> Vector2:
 	return pivot + hand_fan_radius * Vector2(sin(angle), -cos(angle))
 
 
+## `seat`'s hand arranged per _hand_sort, for fanning out the human's own hand.
+## A display order only - a duplicate array, so game.hands itself (and thus
+## legality, animation diffing, and what a client sends over the wire) never
+## depends on how the cards happen to be arranged on screen.
+func _display_hand(seat: int) -> Array:
+	var hand: Array = game.hands[seat].duplicate()
+	if _hand_sort == "suit":
+		hand.sort_custom(func(a: CardData, b: CardData) -> bool:
+			return [a.suit, a.rank] < [b.suit, b.rank])
+	else: # "rank"
+		hand.sort_custom(func(a: CardData, b: CardData) -> bool:
+			return [a.rank, a.suit] < [b.rank, b.suit])
+	return hand
+
+
 func _opponent_slot_pos(seat: int, index: int, hand_size: int) -> Vector2:
 	var layout := _seat_layout(seat)
 	var spacing := 26.0
@@ -1077,7 +1104,7 @@ func _table_z(index: int, is_defense: bool) -> int:
 func _face_up_layout() -> Array:
 	# every card that should currently be shown face up, with its target transform
 	var layout: Array = []
-	var hand: Array = game.hands[_near_seat()]
+	var hand: Array = _display_hand(_near_seat())
 	for i in hand.size():
 		layout.append({
 			card = hand[i], pos = _hand_slot_pos(i, hand.size()),
@@ -1294,7 +1321,7 @@ func _rebuild_input_targets() -> void:
 	if human_seat < 0 or game.is_finished():
 		return
 
-	var hand: Array = game.hands[human_seat]
+	var hand: Array = _display_hand(human_seat)
 	var playable := _playable_cards()
 	for i in hand.size():
 		var card: CardData = hand[i]

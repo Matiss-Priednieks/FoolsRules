@@ -122,6 +122,14 @@ layout_mode = 0
 mouse_filter = 2
 theme_override_font_sizes/font_size = 18
 
+[node name="HandSortButton" type="Button" parent="UI/Root"]
+layout_mode = 0
+position = Vector2(1720, 18)
+size = Vector2(176, 36)
+focus_mode = 0
+theme_override_font_sizes/font_size = 16
+text = "Sort: Rank"
+
 [node name="ConfirmButton" type="Button" parent="UI/Root"]
 layout_mode = 0
 visible = false
