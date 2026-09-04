@@ -357,7 +357,7 @@ func _deal_out() -> void:
 				_opponent_backs.get_or_add(seat, [])
 				var back := _new_back(talon_pos, 4)
 				_opponent_backs[seat].append(back)
-				# spawns upright at the talon, then turns to face its seat mid-flight
+				# turns to face its seat mid-flight
 				_animate_to(back, _opponent_slot_pos(seat, i, hand.size()),
 					_seat_layout(seat).facing,
 					_fit_scale(back, opponent_card_height), deal_fly, 0.0)
@@ -381,7 +381,7 @@ func _to_menu() -> void:
 
 func _restart() -> void:
 	if NetSession.active:
-		_to_menu() # no synced redeal yet; bail to the lobby browser
+		_to_menu() # multiplayer has no redeal button yet
 		return
 	_end_screen.visible = false
 	for view in _card_views.values():

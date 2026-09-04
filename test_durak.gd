@@ -47,9 +47,7 @@ func _play_random_game(game_seed: int) -> Dictionary:
 			return {ok = false, steps = steps,
 				msg = "no legal action, phase=%d, not finished" % game.phase}
 
-		# bug signature: "take" must never be offered once every attack is beaten -
-		# there is nothing to take, and a bot with the human filtered out would
-		# grab a completed defence instead of letting the bout resolve to discard
+		# "take" shouldn't be legal once every attack on the table is beaten
 		for action in legal:
 			if action.type == "take" and _unbeaten_count(game) == 0:
 				return {ok = false, steps = steps,
