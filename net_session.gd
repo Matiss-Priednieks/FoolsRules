@@ -11,6 +11,7 @@ var local_seat := 0                  ## which DurakGame seat this client control
 var seat_is_bot: Array[bool] = [false, false, false, false]  ## per-seat: bot fills it
 var player_names: Array[String] = ["", "", "", ""]           ## display name per seat ("" = bot)
 var seat_steam_id: Array[int] = [0, 0, 0, 0]                 ## per-seat Steam ID, 0 = bot
+var seat_peer_id: Array[int] = [0, 0, 0, 0]                  ## per-seat Godot multiplayer peer id (LAN test), 0 = bot
 var seed := 0                        ## shared DurakGame seed so every peer deals identically
 
 
@@ -20,6 +21,7 @@ func configure_singleplayer() -> void:
 	seat_is_bot = [false, true, true, true]
 	player_names = ["You", "", "", ""]
 	seat_steam_id = [0, 0, 0, 0]
+	seat_peer_id = [0, 0, 0, 0]
 	seed = 0
 
 
@@ -30,6 +32,7 @@ func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id:
 	seat_is_bot = [true, true, true, true]
 	player_names = ["", "", "", ""]
 	seat_steam_id = [0, 0, 0, 0]
+	seat_peer_id = [0, 0, 0, 0]
 	for steam_id in seat_map:
 		var seat: int = seat_map[steam_id]
 		if seat < 0 or seat > 3:
@@ -39,3 +42,15 @@ func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id:
 		player_names[seat] = str(names.get(steam_id, "P%d" % seat))
 		if steam_id == my_steam_id:
 			local_seat = seat
+
+
+## No-Steam local test transport (see menu.gd's --lan-host / --lan-join): a
+## fixed 2-player setup, host always seat 0, the one guest always seat 1.
+func configure_lan_test(seat: int) -> void:
+	active = true
+	seed = 918273645 # fixed - both sides just need to match, not be unpredictable
+	local_seat = seat
+	seat_is_bot = [false, false, true, true]
+	player_names = ["Host", "Guest", "", ""]
+	seat_steam_id = [0, 0, 0, 0]
+	seat_peer_id = [1, 0, 0, 0] # ENet server is always peer id 1; index 1 fills in once the guest connects

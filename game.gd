@@ -125,15 +125,25 @@ var _font_bold: Font
 func _ready() -> void:
 	_headless = DisplayServer.get_name() == "headless"
 	if _headless:
-		bot_delay = 0.0
-		human_seat = -1 # let the headless smoke test self-play
+		bot_delay = 0.0 # keep any headless run (smoke test or a --lan-* test) fast
 	else:
 		_init_audio()
-		if NetSession.active:
-			human_seat = NetSession.local_seat # launched from a multiplayer lobby
-			print("[net] multiplayer game: seat=%d host=%s peer=%s unique_id=%d" % [
-				human_seat, SteamLobby.is_host, multiplayer.multiplayer_peer,
-				multiplayer.get_unique_id()])
+
+	if _headless and not NetSession.active:
+		human_seat = -1 # plain headless run: the self-play smoke test
+	elif NetSession.active:
+		human_seat = NetSession.local_seat # launched from a multiplayer lobby or LAN test
+		print("[net] multiplayer game: seat=%d authority=%s peer=%s unique_id=%d" % [
+			human_seat, _is_authority(), multiplayer.multiplayer_peer,
+			multiplayer.get_unique_id()])
+		if _headless:
+			# Neither a headless host nor a headless client has a UI to drag
+			# cards with, so both need a stand-in for OUR seat specifically -
+			# the host's own seat isn't a bot seat either. Goes through the
+			# same _perform()/RPC path a real drag-and-drop would. Deferred:
+			# _new_game() (called at the end of _ready()) hasn't built `game`
+			# yet at this point.
+			_run_client_autoplay.call_deferred()
 
 	_build_ui_theme()
 
@@ -384,7 +394,8 @@ func _deal_out() -> void:
 
 func _to_menu() -> void:
 	if NetSession.active:
-		SteamLobby.leave()
+		SteamLobby.leave() # no-op for a LAN test (never touched SteamLobby)
+		multiplayer.multiplayer_peer = null # tears down a LAN test's ENet peer too
 	NetSession.active = false
 	get_tree().change_scene_to_file("res://menu.tscn")
 
@@ -491,7 +502,11 @@ func _run_bot_turns() -> void:
 ## them bit-identical without ever transmitting a snapshot.
 
 func _is_authority() -> bool:
-	return not NetSession.active or SteamLobby.is_host
+	if not NetSession.active:
+		return true
+	if SteamLobby.in_lobby:
+		return SteamLobby.is_host # Steam lobby ownership, independent of the RPC peer's state
+	return multiplayer.is_server() # LAN test / any other transport: ENet's server is peer id 1
 
 
 ## Seats Bot.pick must never move for: this peer's own seat (if it's playing)
@@ -532,6 +547,18 @@ func _await_ack(action: Dictionary) -> void:
 
 
 ## A client -> host request to apply `wire`. Runs on the host only.
+## Godot's RPC dispatch does NOT wait for one call's internal awaits to finish
+## before invoking the next incoming call - a burst of broadcasts (e.g. a bout
+## resolving through several bot moves) can call this again while the first is
+## still mid-_apply_and_animate(). Queue + drain one at a time, or two applies
+## interleave and the mirrors desync.
+var _incoming_requests: Array = [] # host: [{wire, seat}] from clients, arrival order
+var _draining_requests := false
+var _incoming_broadcasts: Array = [] # client: [wire] from the host, arrival order
+var _draining_broadcasts := false
+
+
+## A client -> host request to apply `wire`. Runs on the host only.
 @rpc("any_peer", "call_remote", "reliable")
 func net_request_action(wire: Dictionary) -> void:
 	if not _is_authority():
@@ -539,33 +566,82 @@ func net_request_action(wire: Dictionary) -> void:
 	var seat := _seat_for_peer(multiplayer.get_remote_sender_id())
 	if seat < 0:
 		return
-	var action := _resolve_wire_action(wire, seat)
-	if action.is_empty():
-		return # stale or illegal - the sender's watchdog will time out and retry
-	_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
-	await _apply_and_animate(action)
-	net_apply_action.rpc(_action_to_wire(action))
+	_incoming_requests.append({wire = wire, seat = seat})
+	if not _draining_requests:
+		_drain_incoming_requests()
+
+
+func _drain_incoming_requests() -> void:
+	_draining_requests = true
+	while not _incoming_requests.is_empty():
+		var entry: Dictionary = _incoming_requests.pop_front()
+		var action := _resolve_wire_action(entry.wire, entry.seat)
+		if not action.is_empty(): # else stale/illegal - the sender's watchdog will retry
+			_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
+			await _apply_and_animate(action)
+			net_apply_action.rpc(_action_to_wire(action))
+	_draining_requests = false
 	_run_bot_turns()
 
 
 ## The host -> everyone broadcast of an action it just applied. Runs on clients.
 @rpc("authority", "call_remote", "reliable")
 func net_apply_action(wire: Dictionary) -> void:
-	var seat: int = wire.get("player", -1)
-	var action := _resolve_wire_action(wire, seat)
-	if seat == human_seat:
-		_awaiting_ack = false
-	if not action.is_empty():
-		await _apply_and_animate(action)
+	_incoming_broadcasts.append(wire)
+	if not _draining_broadcasts:
+		_drain_incoming_broadcasts()
 
 
-## The Steam ID -> seat map is host-only knowledge (NetSession.seat_steam_id);
-## SteamLobby resolves the RPC sender's Godot peer id back to a Steam ID.
+func _drain_incoming_broadcasts() -> void:
+	_draining_broadcasts = true
+	while not _incoming_broadcasts.is_empty():
+		var wire: Dictionary = _incoming_broadcasts.pop_front()
+		var seat: int = wire.get("player", -1)
+		var action := _resolve_wire_action(wire, seat)
+		if seat == human_seat:
+			_awaiting_ack = false
+		if not action.is_empty():
+			await _apply_and_animate(action)
+	_draining_broadcasts = false
+
+
+## Host-only. Two transports feed this: a LAN test fills NetSession.seat_peer_id
+## with real Godot peer ids directly; Steam only gives us a steam_id per seat,
+## so SteamLobby resolves the RPC sender's Godot peer id back to that.
 func _seat_for_peer(peer_id: int) -> int:
+	var lan_seat := NetSession.seat_peer_id.find(peer_id)
+	if lan_seat != -1:
+		return lan_seat
 	var sid := SteamLobby.steam_id_for_peer(peer_id)
 	if sid == 0:
 		return -1
 	return NetSession.seat_steam_id.find(sid)
+
+
+## Headless test hook (see _ready()): stands in for a client's missing UI by
+## submitting, for OUR seat only, whatever a bot would have played - through
+## the exact same _perform()/RPC path a real drag-and-drop uses.
+func _run_client_autoplay() -> void:
+	var run_id := _game_id
+	while game != null and not game.is_finished():
+		if run_id != _game_id:
+			return
+		if _busy or _awaiting_ack:
+			await _wait(0.02)
+			continue
+		var only_this_seat: Array = []
+		for seat in game.num_players:
+			if seat != human_seat:
+				only_this_seat.append(seat)
+		var action := Bot.pick(game, only_this_seat)
+		if action.is_empty():
+			await _wait(0.02)
+			continue
+		await _perform(action)
+		if _is_authority():
+			# on a real host this is _submit()'s job; this stand-in has to do
+			# it too, or a bot seat whose turn follows ours never gets driven
+			_run_bot_turns()
 
 
 ## An action dict carries a real CardData reference, which only means something

@@ -4,6 +4,8 @@ extends Control
 
 enum Screen { MAIN, BROWSE, ROOM }
 
+const LAN_PORT := 8471
+
 var _screen := Screen.MAIN
 var _box: VBoxContainer
 var _toast: Label
@@ -12,7 +14,22 @@ var _code_input := ""       # kept across re-renders so a half-typed code surviv
 var _host_listed := true    # "List publicly" checkbox state
 
 
+## No-Steam local test transport: run one instance with `-- --lan-host` and a
+## second with `-- --lan-join` (add `=<ip>` for a different machine; defaults
+## to 127.0.0.1) to play a real two-peer match without Steam or a friend.
+## Works from `--headless` too, so this same path is scriptable for testing.
 func _ready() -> void:
+	var args: Array = Array(OS.get_cmdline_user_args())
+	if "--lan-host" in args:
+		_start_lan_test(true, "")
+		return
+	var join_args := args.filter(func(a): return str(a).begins_with("--lan-join"))
+	if not join_args.is_empty():
+		var join_arg := str(join_args[0])
+		var addr: String = join_arg.get_slice("=", 1) if "=" in join_arg else "127.0.0.1"
+		_start_lan_test(false, addr)
+		return
+
 	if DisplayServer.get_name() == "headless":
 		_start_singleplayer.call_deferred() # headless run == the self-play smoke test
 		return
@@ -211,6 +228,32 @@ func _open_browse() -> void:
 
 func _start_singleplayer() -> void:
 	NetSession.configure_singleplayer()
+	get_tree().change_scene_to_file("res://game.tscn")
+
+
+func _start_lan_test(is_host: bool, address: String) -> void:
+	NetSession.configure_lan_test(0 if is_host else 1)
+	var peer := ENetMultiplayerPeer.new()
+	var err := peer.create_server(LAN_PORT, 1) if is_host else peer.create_client(address, LAN_PORT)
+	if err != OK:
+		push_warning("[lan] %s failed: %s" % ["create_server" if is_host else "create_client", err])
+		return
+	multiplayer.multiplayer_peer = peer
+	if is_host:
+		print("[lan] hosting on port %d - waiting for the other instance" % LAN_PORT)
+		multiplayer.peer_connected.connect(_on_lan_guest_connected)
+	else:
+		print("[lan] connecting to %s:%d" % [address, LAN_PORT])
+		multiplayer.connected_to_server.connect(_on_lan_connected)
+		multiplayer.connection_failed.connect(func(): push_warning("[lan] connection failed"))
+
+
+func _on_lan_guest_connected(id: int) -> void:
+	NetSession.seat_peer_id[1] = id
+	get_tree().change_scene_to_file("res://game.tscn")
+
+
+func _on_lan_connected() -> void:
 	get_tree().change_scene_to_file("res://game.tscn")
 
 
