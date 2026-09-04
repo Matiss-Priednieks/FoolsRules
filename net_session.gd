@@ -10,6 +10,8 @@ var active := false                  ## true = launched from a multiplayer lobby
 var local_seat := 0                  ## which DurakGame seat this client controls
 var seat_is_bot: Array[bool] = [false, false, false, false]  ## per-seat: bot fills it
 var player_names: Array[String] = ["", "", "", ""]           ## display name per seat ("" = bot)
+var seat_steam_id: Array[int] = [0, 0, 0, 0]                 ## per-seat Steam ID, 0 = bot
+var seed := 0                        ## shared DurakGame seed so every peer deals identically
 
 
 func configure_singleplayer() -> void:
@@ -17,18 +19,23 @@ func configure_singleplayer() -> void:
 	local_seat = 0
 	seat_is_bot = [false, true, true, true]
 	player_names = ["You", "", "", ""]
+	seat_steam_id = [0, 0, 0, 0]
+	seed = 0
 
 
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }.
-func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id: int) -> void:
+func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id: int, game_seed: int) -> void:
 	active = true
+	seed = game_seed
 	seat_is_bot = [true, true, true, true]
 	player_names = ["", "", "", ""]
+	seat_steam_id = [0, 0, 0, 0]
 	for steam_id in seat_map:
 		var seat: int = seat_map[steam_id]
 		if seat < 0 or seat > 3:
 			continue
 		seat_is_bot[seat] = false
+		seat_steam_id[seat] = steam_id
 		player_names[seat] = str(names.get(steam_id, "P%d" % seat))
 		if steam_id == my_steam_id:
 			local_seat = seat

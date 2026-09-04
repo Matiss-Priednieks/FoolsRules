@@ -3,11 +3,12 @@ class_name Bot
 ## For now bots never translate, and they would rather pass than throw a card in.
 
 ## Returns one legal action for whichever bot seat should move now, or {} when
-## the only legal actions belong to `human_seat`.
-static func pick(game: DurakGame, human_seat: int = -1) -> Dictionary:
+## every remaining legal action belongs to a seat in `excluded_seats` (a human,
+## local or networked, whose moves this policy must never make on their behalf).
+static func pick(game: DurakGame, excluded_seats: Array = []) -> Dictionary:
 	var actions: Array[Dictionary] = []
 	for seat in game.num_players:
-		if seat != human_seat:
+		if seat not in excluded_seats:
 			actions.append_array(game.get_legal_actions(seat))
 	if actions.is_empty():
 		return {}

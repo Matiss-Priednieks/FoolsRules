@@ -194,8 +194,8 @@ func _on_lobby_exited() -> void:
 		_goto(Screen.BROWSE)
 
 
-func _on_game_starting(seat_map: Dictionary, names: Dictionary) -> void:
-	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id)
+func _on_game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int) -> void:
+	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id, game_seed)
 	get_tree().change_scene_to_file("res://game.tscn")
 
 

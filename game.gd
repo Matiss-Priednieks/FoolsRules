@@ -103,6 +103,7 @@ var _turn_epoch := 0 # bumped when the human acts; the bot loop bails on mismatc
 var _busy := false # an _apply_and_animate() is mid-flight
 var _waiting_for_human := false # the human has at least one legal move right now
 var _move_pending := false # human has laid ≥1 card this turn, not yet released to the bots
+var _awaiting_ack := false # multiplayer client: our own action is in flight to the host
 var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
@@ -130,6 +131,9 @@ func _ready() -> void:
 		_init_audio()
 		if NetSession.active:
 			human_seat = NetSession.local_seat # launched from a multiplayer lobby
+			print("[net] multiplayer game: seat=%d host=%s peer=%s unique_id=%d" % [
+				human_seat, SteamLobby.is_host, multiplayer.multiplayer_peer,
+				multiplayer.get_unique_id()])
 
 	_build_ui_theme()
 
@@ -308,7 +312,11 @@ func _new_game() -> void:
 	_turn_epoch += 1
 	_busy = false
 	_move_pending = false
-	game = DurakGame.new(4, 0)
+	_awaiting_ack = false
+	# In multiplayer every peer must deal identically without transmitting the
+	# deal itself, so they all build the same DurakGame from the same seed.
+	var game_seed := NetSession.seed if NetSession.active else 0
+	game = DurakGame.new(4, game_seed)
 	game.game_over.connect(_on_game_over)
 	_deal_out() # animate the deal, then settle + hand off to the bots
 
@@ -332,7 +340,8 @@ func _deal_out() -> void:
 	if _headless:
 		_busy = false
 		_resync()
-		_run_bot_turns()
+		if _is_authority():
+			_run_bot_turns()
 		return
 
 	for label in _seat_labels:
@@ -369,7 +378,8 @@ func _deal_out() -> void:
 		return
 	_busy = false
 	_resync() # settle the exact layout, flip the trump out, unlock input
-	_run_bot_turns()
+	if _is_authority():
+		_run_bot_turns()
 
 
 func _to_menu() -> void:
@@ -441,11 +451,13 @@ func _show_end_screen(loser: int) -> void:
 
 # ---------------------------------------------------------------- bot turn loop
 
-## Keeps letting bots act, one at a time, until only the human can move (or the
-## game ends). `bot_delay` paces the gap *between* consecutive bot moves only -
-## the first bot reply after the human acts is immediate, and control returns to
-## the human as soon as the last bot has moved (no trailing wait). A human move
+## Keeps letting bots act, one at a time, until only a human (local or, in
+## multiplayer, someone on the other end of the wire) can move, or the game
+## ends. `bot_delay` paces the gap *between* consecutive bot moves only - the
+## first bot reply after a human acts is immediate, and control returns to the
+## human as soon as the last bot has moved (no trailing wait). A human move
 ## bumps `_turn_epoch`, making this loop bail so a fresh one starts after it.
+## Host/singleplayer only - see _is_authority().
 func _run_bot_turns() -> void:
 	var run_id := _game_id
 	var epoch := _turn_epoch
@@ -455,14 +467,138 @@ func _run_bot_turns() -> void:
 		if _busy: # a human move slipped in and is animating; wait it out
 			await _wait(0.05)
 			continue
-		var action: Dictionary = Bot.pick(game, human_seat)
+		var excluded := _bot_excluded_seats()
+		var action: Dictionary = Bot.pick(game, excluded)
 		if action.is_empty():
-			return # only the human can move now
-		await _apply_and_animate(action)
+			return # only a human seat can move now
+		await _perform(action)
 		if run_id != _game_id or epoch != _turn_epoch or game.is_finished():
 			return
-		if bot_delay > 0.0 and not Bot.pick(game, human_seat).is_empty():
+		if bot_delay > 0.0 and not Bot.pick(game, excluded).is_empty():
 			await _wait(bot_delay) # only pause if another bot move is coming
+
+
+# ---------------------------------------------------------------- multiplayer sync
+##
+## Singleplayer and the multiplayer host both decide moves locally (their own
+## drag/drop, or Bot.pick for a bot seat) and are "the authority": _perform()
+## just runs _apply_and_animate() as always, then tells any other peers what
+## happened. A multiplayer client never touches its own DurakGame directly -
+## it asks the host over RPC and waits for that same broadcast to come back,
+## so every peer only ever advances its board by replaying an action the host
+## has already validated. Every peer's DurakGame started from the same seed
+## (NetSession.seed), so replaying the same actions in the same order keeps
+## them bit-identical without ever transmitting a snapshot.
+
+func _is_authority() -> bool:
+	return not NetSession.active or SteamLobby.is_host
+
+
+## Seats Bot.pick must never move for: this peer's own seat (if it's playing)
+## plus, in multiplayer, every seat some other human controls - the host waits
+## for their action over the network instead of auto-playing it.
+func _bot_excluded_seats() -> Array:
+	var excluded: Array = []
+	if human_seat >= 0:
+		excluded.append(human_seat)
+	if NetSession.active:
+		for seat in NetSession.seat_is_bot.size():
+			if not NetSession.seat_is_bot[seat] and seat not in excluded:
+				excluded.append(seat)
+	return excluded
+
+
+## The single choke point every locally-decided action flows through, whether
+## it came from this peer's own drag/drop or from Bot.pick.
+func _perform(action: Dictionary) -> void:
+	if _is_authority():
+		await _apply_and_animate(action)
+		if NetSession.active:
+			net_apply_action.rpc(_action_to_wire(action))
+	else:
+		_awaiting_ack = true
+		net_request_action.rpc_id(1, _action_to_wire(action))
+		_await_ack(action)
+
+
+## Defensive-only: a well-behaved host always answers. If it doesn't (a lost
+## packet, a desync), unstick the client's input rather than freeze it forever.
+func _await_ack(action: Dictionary) -> void:
+	await _wait(6.0)
+	if _awaiting_ack:
+		push_warning("[net] host never answered a %s" % action.type)
+		_awaiting_ack = false
+		_resync()
+
+
+## A client -> host request to apply `wire`. Runs on the host only.
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_action(wire: Dictionary) -> void:
+	if not _is_authority():
+		return
+	var seat := _seat_for_peer(multiplayer.get_remote_sender_id())
+	if seat < 0:
+		return
+	var action := _resolve_wire_action(wire, seat)
+	if action.is_empty():
+		return # stale or illegal - the sender's watchdog will time out and retry
+	_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
+	await _apply_and_animate(action)
+	net_apply_action.rpc(_action_to_wire(action))
+	_run_bot_turns()
+
+
+## The host -> everyone broadcast of an action it just applied. Runs on clients.
+@rpc("authority", "call_remote", "reliable")
+func net_apply_action(wire: Dictionary) -> void:
+	var seat: int = wire.get("player", -1)
+	var action := _resolve_wire_action(wire, seat)
+	if seat == human_seat:
+		_awaiting_ack = false
+	if not action.is_empty():
+		await _apply_and_animate(action)
+
+
+## The Steam ID -> seat map is host-only knowledge (NetSession.seat_steam_id);
+## SteamLobby resolves the RPC sender's Godot peer id back to a Steam ID.
+func _seat_for_peer(peer_id: int) -> int:
+	var sid := SteamLobby.steam_id_for_peer(peer_id)
+	if sid == 0:
+		return -1
+	return NetSession.seat_steam_id.find(sid)
+
+
+## An action dict carries a real CardData reference, which only means something
+## on the peer that produced it - the wire form is suit/rank, unique per card.
+func _action_to_wire(action: Dictionary) -> Dictionary:
+	var wire := {type = action.type, player = action.player}
+	if action.get("card") != null:
+		wire.suit = action.card.suit
+		wire.rank = action.card.rank
+	if action.has("target"):
+		wire.target = action.target
+	return wire
+
+
+## Reverses _action_to_wire() against this peer's own DurakGame: finds the
+## matching entry in get_legal_actions(seat) so the resulting action carries a
+## real CardData from THIS peer's mirror. Doubles as validation - a stale or
+## fabricated wire action simply matches nothing and comes back empty.
+func _resolve_wire_action(wire: Dictionary, seat: int) -> Dictionary:
+	if seat < 0 or game == null:
+		return {}
+	for candidate in game.get_legal_actions(seat):
+		if candidate.type != wire.get("type"):
+			continue
+		if candidate.get("target", -1) != wire.get("target", -1):
+			continue
+		var wants_card: bool = wire.has("suit")
+		if candidate.has("card") != wants_card:
+			continue
+		if wants_card and (candidate.card.suit != wire.suit or candidate.card.rank != wire.rank):
+			continue
+		return candidate
+	return {}
 
 
 # ---------------------------------------------------------------- action + animation
@@ -711,14 +847,15 @@ func _human_actions() -> Array:
 
 
 func _submit(action: Dictionary) -> void:
-	if _busy:
-		return # a move is already animating; ignore this one
+	if _busy or _awaiting_ack:
+		return # a move is already animating, or ours is in flight to the host
 	_turn_epoch += 1 # pre-empt the bot loop so it doesn't act on top of us
 	_drag = {}
 	_hovered_view = null
 	_move_pending = false
-	await _apply_and_animate(action)
-	_run_bot_turns()
+	await _perform(action)
+	if _is_authority():
+		_run_bot_turns()
 
 
 ## Lay one attack card down but keep the turn on the human's side: the bots
@@ -726,7 +863,7 @@ func _submit(action: Dictionary) -> void:
 ## one go. A card on the table can't be taken back - it lives in game.table, so
 ## _rebuild_input_targets() never re-lists it as draggable.
 func _play_local(action: Dictionary) -> void:
-	if _busy:
+	if _busy or _awaiting_ack:
 		return
 	_turn_epoch += 1
 	_drag = {}
@@ -734,8 +871,8 @@ func _play_local(action: Dictionary) -> void:
 	# set before the await: _apply_and_animate() ends with _resync(), which is
 	# what puts the Confirm button on screen - it has to see the flag already set
 	_move_pending = true
-	await _apply_and_animate(action)
-	if _human_actions().is_empty():
+	await _perform(action)
+	if _is_authority() and _human_actions().is_empty():
 		_release_to_bots() # nothing left to add - hand over on its own
 
 
@@ -747,13 +884,14 @@ func _release_to_bots() -> void:
 	if game != null and not game.is_finished():
 		for action in _human_actions():
 			if action.type == "pass":
-				await _apply_and_animate(action)
+				await _perform(action)
 				break
-	_run_bot_turns()
+	if _is_authority():
+		_run_bot_turns()
 
 
 func _on_confirm() -> void:
-	if _busy or not _move_pending:
+	if _busy or _awaiting_ack or not _move_pending:
 		return
 	_release_to_bots()
 
@@ -780,7 +918,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			[KEY_SPACE, KEY_ENTER, KEY_KP_ENTER]:
 			_restart()
 		return
-	if not _waiting_for_human:
+	if not _waiting_for_human or _awaiting_ack:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -862,7 +1000,7 @@ func _process(_delta: float) -> void:
 		return
 
 	# hover / raise only when the human can actually act; the fan still settles below
-	var interactive: bool = _waiting_for_human and not dragging
+	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack
 	_hovered_view = null
 	if interactive:
 		for i in range(_hand_slots.size() - 1, -1, -1):

@@ -34,7 +34,7 @@ signal lobby_error(msg: String)
 signal members_updated()
 signal browse_updated()
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }
-signal game_starting(seat_map: Dictionary, names: Dictionary)
+signal game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int)
 
 var in_lobby := false
 var is_host := false
@@ -163,15 +163,17 @@ func join_by_code(code: String) -> void:
 	join(id)
 
 
-## Host only. Freeze the seat assignment and tell every member to load the board.
+## Host only. Freeze the seat assignment, pick one shared DurakGame seed so
+## every peer deals identically, and tell every member to load the board.
 func start_game() -> void:
 	if not is_host or not in_lobby:
 		return
 	var seat_map := _resolve_seats()
-	var wire := {}
+	var seats_wire := {}
 	for steam_id in seat_map:
-		wire[str(steam_id)] = seat_map[steam_id]
-	_steam.setLobbyData(lobby_id, SEATMAP, JSON.stringify(wire))
+		seats_wire[str(steam_id)] = seat_map[steam_id]
+	var payload := {seed = randi_range(1, 2000000000), seats = seats_wire}
+	_steam.setLobbyData(lobby_id, SEATMAP, JSON.stringify(payload))
 	_steam.setLobbyData(lobby_id, LOBBY_STATE, "starting")
 	if _steam.has_method("setLobbyJoinable"):
 		_steam.setLobbyJoinable(lobby_id, false)
@@ -184,6 +186,14 @@ func seats_taken() -> Dictionary:
 		if m.seat >= 0:
 			taken[m.seat] = m.steam_id
 	return taken
+
+
+## The Steam ID behind a Godot multiplayer peer id, for RPC sender -> seat
+## lookups. 0 if there's no active peer or the id is unknown.
+func steam_id_for_peer(peer_id: int) -> int:
+	if _peer == null or not _peer.has_method("get_steam_id_for_peer_id"):
+		return 0
+	return int(_peer.get_steam_id_for_peer_id(peer_id))
 
 
 # --- Steam callbacks ----------------------------------------------------
@@ -340,14 +350,13 @@ func _maybe_start() -> void:
 	if raw == "":
 		return
 	var parsed: Variant = JSON.parse_string(raw)
-	if not (parsed is Dictionary):
+	if not (parsed is Dictionary) or not parsed.has("seats"):
 		return
 	_starting = true
 	var seat_map := {}
 	var names := {}
-	for key in parsed:
-		var sid := int(key)
-		seat_map[sid] = int(parsed[key])
+	for key in parsed.seats:
+		seat_map[int(key)] = int(parsed.seats[key])
 	for m in members:
 		names[m.steam_id] = m.name
-	game_starting.emit(seat_map, names)
+	game_starting.emit(seat_map, names, int(parsed.get("seed", 0)))
