@@ -1,3 +1,17 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# Steam - dev-only App ID file (a real install supplies the ID); never ship it.
+steam_appid.txt
+*.acf
+addons/godotsteam/**/~*
+addons/godotsteam/**/*.TMP
+
+# GodotSteam ships libs for every platform. Keep only Windows + Linux x86_64 in
+# the repo; the rest stay on disk (so local exports still work) but untracked.
+addons/godotsteam/androidarm64/
+addons/godotsteam/linux32/
+addons/godotsteam/linuxarm64/
+addons/godotsteam/osx/
+addons/godotsteam/win32/

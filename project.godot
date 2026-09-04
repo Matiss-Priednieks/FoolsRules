@@ -15,6 +15,10 @@ run/main_scene="uid://ct3vu4eosia50"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
+[autoload]
+
+SteamManager="*res://steam_manager.gd"
+
 [display]
 
 window/size/viewport_width=1920
