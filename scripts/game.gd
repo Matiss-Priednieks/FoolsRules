@@ -69,6 +69,8 @@ const BOARD_CENTER := Vector2(960, 540)
 @export var discard_pos := Vector2(1690, 560)
 @export var table_drop_rect := Rect2(500, 350, 920, 380) ## where a dragged card counts as "on the table"
 @export var translate_strip_rect := Rect2(660, 232, 600, 96) ## the "pass the attack on" drop strip
+@export var confirm_pass_pos := Vector2(1520, 610) ## Confirm and Pass share this slot - only one is ever visible at once
+@export var take_button_pos := Vector2(1520, 690)
 
 var game: DurakGame
 
@@ -156,9 +158,12 @@ func _ready() -> void:
 	_set_slot_marker_points(_talon_marker, talon_card_height)
 	_set_slot_marker_points(_discard_marker, discard_card_height)
 	_place_slots()
-	# translate_strip_rect is a tunable export, not baked into the scene
+	# these are tunable exports, not baked into the scene
 	_translate_strip.position = translate_strip_rect.position
 	_translate_strip.size = translate_strip_rect.size
+	_confirm_button.position = confirm_pass_pos
+	_pass_button.position = confirm_pass_pos
+	_take_button.position = take_button_pos
 
 	_hand_sort_button.pressed.connect(_on_hand_sort_pressed)
 	_confirm_button.pressed.connect(_on_confirm)
