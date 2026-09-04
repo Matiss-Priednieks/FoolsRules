@@ -8,6 +8,8 @@ var _screen := Screen.MAIN
 var _box: VBoxContainer
 var _toast: Label
 var _toast_until := 0.0
+var _code_input := ""       # kept across re-renders so a half-typed code survives a refresh
+var _host_listed := true    # "List publicly" checkbox state
 
 
 func _ready() -> void:
@@ -73,10 +75,34 @@ func _render_main() -> void:
 
 func _render_browse() -> void:
 	_title("Multiplayer")
-	_button("Host Game", func(): SteamLobby.host(true))
+
+	var list_toggle := CheckButton.new()
+	list_toggle.text = "List publicly"
+	list_toggle.button_pressed = _host_listed
+	list_toggle.toggled.connect(func(on): _host_listed = on)
+	_box.add_child(list_toggle)
+	_button("Host Game", func(): SteamLobby.host(_host_listed))
+
+	_box.add_child(HSeparator.new())
+
+	var code_row := HBoxContainer.new()
+	code_row.add_theme_constant_override("separation", 8)
+	var code_field := LineEdit.new()
+	code_field.placeholder_text = "invite code"
+	code_field.custom_minimum_size = Vector2(300, 0)
+	code_field.text = _code_input
+	code_field.text_changed.connect(func(t): _code_input = t)
+	code_row.add_child(code_field)
+	var go := Button.new()
+	go.text = "Join by Code"
+	go.pressed.connect(func(): SteamLobby.join_by_code(_code_input))
+	code_row.add_child(go)
+	_box.add_child(code_row)
+
+	_box.add_child(HSeparator.new())
 	_button("Refresh List", func(): SteamLobby.refresh_browse())
 	if SteamLobby.browse_results.is_empty():
-		_label("No open lobbies. Host one, or Refresh.")
+		_label("No public lobbies. Host one, join by code, or Refresh.")
 	else:
 		for entry in SteamLobby.browse_results:
 			var e: Dictionary = entry
@@ -119,6 +145,20 @@ func _render_room() -> void:
 		_box.add_child(row)
 
 	_box.add_child(HSeparator.new())
+
+	var code := SteamLobby.get_invite_code()
+	if code != "":
+		var code_row := HBoxContainer.new()
+		code_row.add_theme_constant_override("separation", 8)
+		var cl := Label.new()
+		cl.text = "Invite code:  %s" % code
+		code_row.add_child(cl)
+		var copy := Button.new()
+		copy.text = "Copy"
+		copy.pressed.connect(_copy_code.bind(code))
+		code_row.add_child(copy)
+		_box.add_child(code_row)
+
 	_button("Invite Friends…", func(): SteamLobby.invite_friend())
 
 	if SteamLobby.is_host:
@@ -157,6 +197,11 @@ func _on_lobby_exited() -> void:
 func _on_game_starting(seat_map: Dictionary, names: Dictionary) -> void:
 	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id)
 	get_tree().change_scene_to_file("res://game.tscn")
+
+
+func _copy_code(code: String) -> void:
+	DisplayServer.clipboard_set(code)
+	_flash("invite code copied")
 
 
 func _open_browse() -> void:

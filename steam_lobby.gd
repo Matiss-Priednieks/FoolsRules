@@ -17,15 +17,16 @@ const MAX_PLAYERS := 4
 const _LOBBY_FRIENDS := 1
 const _LOBBY_PUBLIC := 2
 
-# lobby-data keys (host-written, replicated to all members)
-const _K_GAME := "game"          # filter tag, always "durak"
-const _K_HOST := "host_name"
-const _K_STATE := "state"        # "setup" | "starting"
-const _K_SEATMAP := "seatmap"    # JSON { "<steam_id>": <seat> }
-# member-data keys (each member writes only their own)
-const _MK_SEAT := "seat"         # "-1" unset, else "0".."3"
-const _MK_READY := "ready"       # "0" | "1"
-const _MK_NAME := "name"
+# String keys used with Steam's setLobbyData/setLobbyMemberData. Lobby-data is
+# host-written and shared; member-data each player writes for themselves.
+const GAME_TAG := "game"
+const HOST_NAME := "host_name"
+const LOBBY_STATE := "state"     # "setup" or "starting"
+const SEATMAP := "seatmap"       # JSON { "<steam_id>": <seat> }, written on start
+const LISTED := "listed"         # "0" keeps a lobby out of the browser
+const SEAT := "seat"             # "-1" unset, else "0".."3"
+const READY := "ready"
+const PLAYER_NAME := "name"
 
 signal lobby_entered(as_host: bool)
 signal lobby_exited()
@@ -44,6 +45,7 @@ var browse_results: Array[Dictionary] = []   # [{lobby_id, host_name, count, max
 var _steam: Object = null
 var _peer: MultiplayerPeer = null
 var _starting := false
+var _pending_listed := true
 
 
 func _ready() -> void:
@@ -69,13 +71,17 @@ func _ready() -> void:
 
 # --- public API -----------------------------------------------------------
 
-func host(friends_only := true) -> void:
+## `listed` false = the lobby stays out of the in-game browser; it can then only
+## be joined via its invite code (get_invite_code) or a Steam overlay invite.
+## The lobby is Public either way so a code works for non-friends.
+func host(listed := true) -> void:
 	if not _guard():
 		return
 	if in_lobby:
 		leave()
 	_starting = false
-	_steam.createLobby(_LOBBY_FRIENDS if friends_only else _LOBBY_PUBLIC, MAX_PLAYERS)
+	_pending_listed = listed
+	_steam.createLobby(_LOBBY_PUBLIC, MAX_PLAYERS)
 
 
 func join(target: int) -> void:
@@ -105,7 +111,7 @@ func refresh_browse() -> void:
 	if not _guard():
 		return
 	if _steam.has_method("addRequestLobbyListStringFilter"):
-		_steam.addRequestLobbyListStringFilter(_K_GAME, "durak", 0)  # 0 == equal
+		_steam.addRequestLobbyListStringFilter(GAME_TAG, "durak", 0)  # 0 == equal
 	if _steam.has_method("addRequestLobbyListDistanceFilter"):
 		_steam.addRequestLobbyListDistanceFilter(3)  # 3 == worldwide
 	_steam.requestLobbyList()
@@ -113,17 +119,48 @@ func refresh_browse() -> void:
 
 func set_my_seat(seat: int) -> void:
 	if in_lobby:
-		_steam.setLobbyMemberData(lobby_id, _MK_SEAT, str(seat))
+		_steam.setLobbyMemberData(lobby_id, SEAT, str(seat))
 
 
-func set_my_ready(ready: bool) -> void:
+func set_my_ready(is_ready: bool) -> void:
 	if in_lobby:
-		_steam.setLobbyMemberData(lobby_id, _MK_READY, "1" if ready else "0")
+		_steam.setLobbyMemberData(lobby_id, READY, "1" if is_ready else "0")
 
 
 func invite_friend() -> void:
 	if in_lobby:
 		_steam.activateGameOverlayInviteDialog(lobby_id)
+
+
+## Copy-paste code that resolves straight to this lobby, no friendship needed.
+## It is just the lobby's Steam ID in hex, grouped in fours for readability.
+func get_invite_code() -> String:
+	if not in_lobby or lobby_id == 0:
+		return ""
+	var hex := String.num_int64(lobby_id, 16).to_upper()
+	var out := ""
+	for i in hex.length():
+		if i > 0 and (hex.length() - i) % 4 == 0:
+			out += "-"
+		out += hex[i]
+	return out
+
+
+func join_by_code(code: String) -> void:
+	if not _guard():
+		return
+	var digits := ""
+	for ch in code.to_upper():
+		if ch in "0123456789ABCDEF":
+			digits += ch
+	if digits.is_empty():
+		lobby_error.emit("Enter an invite code")
+		return
+	var id := digits.hex_to_int()
+	if id <= 0:
+		lobby_error.emit("That invite code isn't valid")
+		return
+	join(id)
 
 
 ## Host only. Freeze the seat assignment and tell every member to load the board.
@@ -134,8 +171,8 @@ func start_game() -> void:
 	var wire := {}
 	for steam_id in seat_map:
 		wire[str(steam_id)] = seat_map[steam_id]
-	_steam.setLobbyData(lobby_id, _K_SEATMAP, JSON.stringify(wire))
-	_steam.setLobbyData(lobby_id, _K_STATE, "starting")
+	_steam.setLobbyData(lobby_id, SEATMAP, JSON.stringify(wire))
+	_steam.setLobbyData(lobby_id, LOBBY_STATE, "starting")
 	if _steam.has_method("setLobbyJoinable"):
 		_steam.setLobbyJoinable(lobby_id, false)
 	_maybe_start()  # host may not get its own lobby_data_update
@@ -158,12 +195,13 @@ func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	lobby_id = new_lobby_id
 	in_lobby = true
 	is_host = true
-	_steam.setLobbyData(lobby_id, _K_GAME, "durak")
-	_steam.setLobbyData(lobby_id, _K_HOST, SteamManager.persona_name)
-	_steam.setLobbyData(lobby_id, _K_STATE, "setup")
-	_steam.setLobbyMemberData(lobby_id, _MK_NAME, SteamManager.persona_name)
-	_steam.setLobbyMemberData(lobby_id, _MK_SEAT, "0")   # host takes seat 0
-	_steam.setLobbyMemberData(lobby_id, _MK_READY, "0")
+	_steam.setLobbyData(lobby_id, GAME_TAG, "durak")
+	_steam.setLobbyData(lobby_id, HOST_NAME, SteamManager.persona_name)
+	_steam.setLobbyData(lobby_id, LOBBY_STATE, "setup")
+	_steam.setLobbyData(lobby_id, LISTED, "1" if _pending_listed else "0")
+	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
+	_steam.setLobbyMemberData(lobby_id, SEAT, "0")   # host takes seat 0
+	_steam.setLobbyMemberData(lobby_id, READY, "0")
 	_start_peer(true)
 	_rebuild_members()
 	lobby_entered.emit(true)
@@ -177,9 +215,9 @@ func _on_lobby_joined(this_lobby: int, _permissions: int, _locked: bool, respons
 	lobby_id = this_lobby
 	in_lobby = true
 	is_host = int(_steam.getLobbyOwner(lobby_id)) == SteamManager.steam_id
-	_steam.setLobbyMemberData(lobby_id, _MK_NAME, SteamManager.persona_name)
-	_steam.setLobbyMemberData(lobby_id, _MK_SEAT, "-1")
-	_steam.setLobbyMemberData(lobby_id, _MK_READY, "0")
+	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
+	_steam.setLobbyMemberData(lobby_id, SEAT, "-1")
+	_steam.setLobbyMemberData(lobby_id, READY, "0")
 	_start_peer(is_host)
 	_rebuild_members()
 	lobby_entered.emit(is_host)
@@ -191,13 +229,15 @@ func _on_lobby_match_list(lobbies: Array) -> void:
 	browse_results.clear()
 	for entry in lobbies:
 		var id := int(entry)
-		if str(_steam.getLobbyData(id, _K_GAME)) != "durak":
+		if str(_steam.getLobbyData(id, GAME_TAG)) != "durak":
 			continue
-		if str(_steam.getLobbyData(id, _K_STATE)) == "starting":
+		if str(_steam.getLobbyData(id, LOBBY_STATE)) == "starting":
 			continue
+		if str(_steam.getLobbyData(id, LISTED)) == "0":
+			continue  # code / invite only
 		browse_results.append({
 			lobby_id = id,
-			host_name = str(_steam.getLobbyData(id, _K_HOST)),
+			host_name = str(_steam.getLobbyData(id, HOST_NAME)),
 			count = int(_steam.getNumLobbyMembers(id)),
 			max = int(_steam.getLobbyMemberLimit(id)),
 		})
@@ -216,7 +256,7 @@ func _on_lobby_data_update(_success: int, updated_lobby: int, _member_id: int) -
 		return
 	_rebuild_members()
 	members_updated.emit()
-	if str(_steam.getLobbyData(lobby_id, _K_STATE)) == "starting":
+	if str(_steam.getLobbyData(lobby_id, LOBBY_STATE)) == "starting":
 		_maybe_start()
 
 
@@ -253,21 +293,21 @@ func _rebuild_members() -> void:
 	members.clear()
 	if not in_lobby:
 		return
-	var owner := int(_steam.getLobbyOwner(lobby_id))
+	var owner_id := int(_steam.getLobbyOwner(lobby_id))
 	var count := int(_steam.getNumLobbyMembers(lobby_id))
 	for i in count:
 		var sid := int(_steam.getLobbyMemberByIndex(lobby_id, i))
-		var name_str := str(_steam.getLobbyMemberData(lobby_id, sid, _MK_NAME))
+		var name_str := str(_steam.getLobbyMemberData(lobby_id, sid, PLAYER_NAME))
 		if name_str == "":
 			name_str = str(_steam.getFriendPersonaName(sid))
-		var seat_str := str(_steam.getLobbyMemberData(lobby_id, sid, _MK_SEAT))
-		var ready_str := str(_steam.getLobbyMemberData(lobby_id, sid, _MK_READY))
+		var seat_str := str(_steam.getLobbyMemberData(lobby_id, sid, SEAT))
+		var ready_str := str(_steam.getLobbyMemberData(lobby_id, sid, READY))
 		members.append({
 			steam_id = sid,
 			name = name_str,
 			seat = int(seat_str) if seat_str != "" else -1,
 			ready = ready_str == "1",
-			is_host = sid == owner,
+			is_host = sid == owner_id,
 		})
 
 
@@ -296,7 +336,7 @@ func _resolve_seats() -> Dictionary:
 func _maybe_start() -> void:
 	if _starting or not in_lobby:
 		return
-	var raw := str(_steam.getLobbyData(lobby_id, _K_SEATMAP))
+	var raw := str(_steam.getLobbyData(lobby_id, SEATMAP))
 	if raw == "":
 		return
 	var parsed: Variant = JSON.parse_string(raw)
