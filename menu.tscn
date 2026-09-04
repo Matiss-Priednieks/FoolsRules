@@ -10,3 +10,177 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_menu")
+
+[node name="Toast" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -320.0
+offset_top = -60.0
+offset_right = 320.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+modulate = Color(1, 0.5, 0.5, 1)
+horizontal_alignment = 1
+
+[node name="MainPanel" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MainBox" type="VBoxContainer" parent="MainPanel"]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="MainTitle" type="Label" parent="MainPanel/MainBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "DURAK"
+horizontal_alignment = 1
+
+[node name="SingleplayerButton" type="Button" parent="MainPanel/MainBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Singleplayer"
+
+[node name="MultiplayerButton" type="Button" parent="MainPanel/MainBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Multiplayer"
+
+[node name="QuitButton" type="Button" parent="MainPanel/MainBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Quit"
+
+[node name="BrowsePanel" type="CenterContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="BrowseBox" type="VBoxContainer" parent="BrowsePanel"]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="BrowseTitle" type="Label" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "Multiplayer"
+horizontal_alignment = 1
+
+[node name="ListPubliclyCheck" type="CheckButton" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+button_pressed = true
+text = "List publicly"
+
+[node name="HostButton" type="Button" parent="BrowsePanel/BrowseBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Host Game"
+
+[node name="HSeparator1" type="HSeparator" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+
+[node name="CodeRow" type="HBoxContainer" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CodeField" type="LineEdit" parent="BrowsePanel/BrowseBox/CodeRow"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+placeholder_text = "invite code"
+
+[node name="JoinByCodeButton" type="Button" parent="BrowsePanel/BrowseBox/CodeRow"]
+layout_mode = 2
+text = "Join by Code"
+
+[node name="HSeparator2" type="HSeparator" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="BrowsePanel/BrowseBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Refresh List"
+
+[node name="ResultsBox" type="VBoxContainer" parent="BrowsePanel/BrowseBox"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="BackButton" type="Button" parent="BrowsePanel/BrowseBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Back"
+
+[node name="RoomPanel" type="CenterContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RoomBox" type="VBoxContainer" parent="RoomPanel"]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="RoomTitle" type="Label" parent="RoomPanel/RoomBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "Lobby"
+horizontal_alignment = 1
+
+[node name="MembersBox" type="VBoxContainer" parent="RoomPanel/RoomBox"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="HSeparator3" type="HSeparator" parent="RoomPanel/RoomBox"]
+layout_mode = 2
+
+[node name="InviteCodeRow" type="HBoxContainer" parent="RoomPanel/RoomBox"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="InviteCodeLabel" type="Label" parent="RoomPanel/RoomBox/InviteCodeRow"]
+layout_mode = 2
+text = "Invite code:"
+
+[node name="CopyButton" type="Button" parent="RoomPanel/RoomBox/InviteCodeRow"]
+layout_mode = 2
+text = "Copy"
+
+[node name="InviteFriendsButton" type="Button" parent="RoomPanel/RoomBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Invite Friends…"
+
+[node name="StartButton" type="Button" parent="RoomPanel/RoomBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Start Game"
+
+[node name="HintLabel" type="Label" parent="RoomPanel/RoomBox"]
+layout_mode = 2
+text = "Waiting for the host to start…"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="LeaveButton" type="Button" parent="RoomPanel/RoomBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Leave Lobby"
