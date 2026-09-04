@@ -1,6 +1,7 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+/exports/
 
 # Steam - dev-only App ID file (a real install supplies the ID); never ship it.
 steam_appid.txt
