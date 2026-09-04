@@ -1,8 +1,8 @@
 [gd_scene format=3 uid="uid://ct3vu4eosia50"]
 
-[ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://game.gd" id="1_80nbo"]
-[ext_resource type="Shader" uid="uid://dbvkbbn3cjdux" path="res://crt.gdshader" id="2_crt"]
-[ext_resource type="Shader" uid="uid://66rco2vfeeqa" path="res://pixel.gdshader" id="3_pixel"]
+[ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://scripts/game.gd" id="1_80nbo"]
+[ext_resource type="Shader" uid="uid://dbvkbbn3cjdux" path="res://shaders/crt.gdshader" id="2_crt"]
+[ext_resource type="Shader" uid="uid://66rco2vfeeqa" path="res://shaders/pixel.gdshader" id="3_pixel"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_pixel"]
 shader = ExtResource("3_pixel")

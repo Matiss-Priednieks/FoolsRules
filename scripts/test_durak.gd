@@ -1,6 +1,6 @@
 extends SceneTree
 ## Headless fuzz test for the rules engine.
-##   godot --headless --script res://test_durak.gd
+##   godot --headless --script res://scripts/test_durak.gd
 ## Plays many random-legal games and checks that every one terminates, that
 ## cards are conserved (36, all distinct, at every step), and that no bug
 ## signatures show up.

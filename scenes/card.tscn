@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://bs3fht0e3dn2t"]
 
-[ext_resource type="Script" uid="uid://detro67fld77e" path="res://card.gd" id="1_kikvd"]
+[ext_resource type="Script" uid="uid://detro67fld77e" path="res://scripts/card.gd" id="1_kikvd"]
 
 [node name="Sprite2D" type="Sprite2D" unique_id=901492980]
 script = ExtResource("1_kikvd")

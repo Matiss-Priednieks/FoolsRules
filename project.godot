@@ -11,15 +11,15 @@ config_version=5
 [application]
 
 config/name="durak"
-run/main_scene="res://menu.tscn"
+run/main_scene="res://scenes/menu.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
 
-SteamManager="*res://steam_manager.gd"
-SteamLobby="*res://steam_lobby.gd"
-NetSession="*res://net_session.gd"
+SteamManager="*res://scripts/steam_manager.gd"
+SteamLobby="*res://scripts/steam_lobby.gd"
+NetSession="*res://scripts/net_session.gd"
 
 [display]
 

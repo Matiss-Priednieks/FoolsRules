@@ -7,7 +7,7 @@ extends Control
 enum Screen { MAIN, BROWSE, ROOM }
 
 const LAN_PORT := 8471
-const LobbyMemberRow := preload("res://lobby_member_row.tscn")
+const LobbyMemberRow := preload("res://scenes/lobby_member_row.tscn")
 
 @onready var _toast: Label = $Toast
 @onready var _main_panel: Control = $MainPanel
@@ -185,7 +185,7 @@ func _on_lobby_exited() -> void:
 
 func _on_game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int) -> void:
 	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id, game_seed)
-	get_tree().change_scene_to_file("res://game.tscn")
+	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 
 func _copy_code(code: String) -> void:
@@ -195,7 +195,7 @@ func _copy_code(code: String) -> void:
 
 func _start_singleplayer() -> void:
 	NetSession.configure_singleplayer()
-	get_tree().change_scene_to_file("res://game.tscn")
+	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 
 func _start_lan_test(is_host: bool, address: String) -> void:
@@ -217,11 +217,11 @@ func _start_lan_test(is_host: bool, address: String) -> void:
 
 func _on_lan_guest_connected(id: int) -> void:
 	NetSession.seat_peer_id[1] = id
-	get_tree().change_scene_to_file("res://game.tscn")
+	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 
 func _on_lan_connected() -> void:
-	get_tree().change_scene_to_file("res://game.tscn")
+	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 
 func _flash(msg: String) -> void:

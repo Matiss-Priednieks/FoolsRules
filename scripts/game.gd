@@ -6,7 +6,7 @@ extends Node2D
 ## finished bouts stay followable. Hidden zones (opponent hands, the talon body,
 ## the discard pile) are drawn as pools of face-down "back" sprites.
 
-const CARD_SCENE := preload("res://card.tscn")
+const CARD_SCENE := preload("res://scenes/card.tscn")
 const SUIT_GLYPHS := ["♣", "♦", "♥", "♠"]
 const BOARD_CENTER := Vector2(960, 540)
 
@@ -294,7 +294,7 @@ func _to_menu() -> void:
 		SteamLobby.leave() # no-op for a LAN test (never touched SteamLobby)
 		multiplayer.multiplayer_peer = null # tears down a LAN test's ENet peer too
 	NetSession.active = false
-	get_tree().change_scene_to_file("res://menu.tscn")
+	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
 func _restart() -> void:
