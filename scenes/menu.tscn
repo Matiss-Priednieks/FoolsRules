@@ -1,17 +1,185 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://g3snaubia70l"]
 
-[ext_resource type="Script" path="res://scripts/menu.gd" id="1_menu"]
+[ext_resource type="FontFile" uid="uid://ktehcoeqxyot" path="res://fonts/dm-serif.ttf" id="1_con2f"]
+[ext_resource type="Script" uid="uid://b0eqjsoqu2s8w" path="res://scripts/menu.gd" id="1_menu"]
+[ext_resource type="Gradient" uid="uid://bdc3bgqew7wrg" path="res://shaders/green_gradient.tres" id="3_con2f"]
 
-[node name="Menu" type="Control"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vjb58"]
+bg_color = Color(0.17249994, 0, 0.45, 1)
+corner_radius_top_left = 30
+corner_radius_top_right = 30
+corner_radius_bottom_right = 30
+corner_radius_bottom_left = 30
+corner_detail = 1
+
+[sub_resource type="Theme" id="Theme_con2f"]
+Button/font_sizes/font_size = 25
+Button/fonts/font = ExtResource("1_con2f")
+Button/styles/normal = SubResource("StyleBoxFlat_vjb58")
+Label/font_sizes/font_size = 50
+Label/fonts/font = ExtResource("1_con2f")
+
+[sub_resource type="VisualShaderNodeVectorDecompose" id="VisualShaderNodeVectorDecompose_vjb58"]
+default_input_values = [0, Vector2(0, 0)]
+op_type = 0
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_con2f"]
+output_port_for_preview = 0
+operator = 1
+
+[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_mhnvy"]
+input_name = "time"
+
+[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_4ytvr"]
+input_name = "uv"
+
+[sub_resource type="VisualShaderNodeFloatConstant" id="VisualShaderNodeFloatConstant_g3eks"]
+constant = 2.0
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_v86rl"]
+output_port_for_preview = 0
+operator = 2
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_13sgg"]
+output_port_for_preview = 0
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_i6lef"]
+output_port_for_preview = 0
+default_input_values = [0, 0.0, 1, 0.09]
+operator = 2
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_32sm0"]
+noise_type = 3
+frequency = 0.0039
+fractal_lacunarity = 1.31
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_qughs"]
+noise = SubResource("FastNoiseLite_32sm0")
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_70i5f"]
+texture = SubResource("NoiseTexture2D_qughs")
+
+[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_mj5lg"]
+default_input_values = [0, Vector2(0, 0), 1, Vector2(48, 27)]
+op_type = 0
+operator = 2
+
+[sub_resource type="VisualShaderNodeVectorFunc" id="VisualShaderNodeVectorFunc_ufwb2"]
+default_input_values = [0, Vector2(0, 0)]
+op_type = 0
+function = 17
+
+[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_6cdou"]
+default_input_values = [0, Vector2(0, 0), 1, Vector2(0.5, 0.5)]
+op_type = 0
+
+[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_i42df"]
+default_input_values = [0, Vector2(0, 0), 1, Vector2(48, 27)]
+op_type = 0
+operator = 3
+
+[sub_resource type="VisualShaderNodeFloatFunc" id="VisualShaderNodeFloatFunc_7jp70"]
+function = 0
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_mxgkd"]
+output_port_for_preview = 0
+
+[sub_resource type="VisualShaderNodeFloatFunc" id="VisualShaderNodeFloatFunc_g6gyw"]
+output_port_for_preview = 0
+function = 17
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_8h11u"]
+gradient = ExtResource("3_con2f")
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_3dmrc"]
+output_port_for_preview = 0
+texture = SubResource("GradientTexture1D_8h11u")
+texture_type = 1
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_81l6r"]
+output_port_for_preview = 0
+default_input_values = [0, 0.0, 1, 0.5]
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_rsfmq"]
+output_port_for_preview = 0
+default_input_values = [0, 0.0, 1, 1.0]
+operator = 2
+
+[sub_resource type="VisualShaderNodeVectorDecompose" id="VisualShaderNodeVectorDecompose_oi1it"]
+default_input_values = [0, Vector2(0, 0)]
+op_type = 0
+
+[sub_resource type="VisualShader" id="VisualShader_fy8yy"]
+mode = 1
+flags/light_only = false
+nodes/vertex/0/position = Vector2(2053.3333, -40)
+nodes/fragment/0/position = Vector2(2253.3333, 840)
+nodes/fragment/2/node = SubResource("VisualShaderNodeFloatOp_i6lef")
+nodes/fragment/2/position = Vector2(1080, 720)
+nodes/fragment/3/node = SubResource("VisualShaderNodeFloatFunc_7jp70")
+nodes/fragment/3/position = Vector2(693.3333, 773.3333)
+nodes/fragment/4/node = SubResource("VisualShaderNodeFloatOp_mxgkd")
+nodes/fragment/4/position = Vector2(1520, 813.3333)
+nodes/fragment/5/node = SubResource("VisualShaderNodeFloatFunc_g6gyw")
+nodes/fragment/5/position = Vector2(1746.6666, 840)
+nodes/fragment/6/node = SubResource("VisualShaderNodeTexture_3dmrc")
+nodes/fragment/6/position = Vector2(1986.6666, 733.3333)
+nodes/fragment/7/node = SubResource("VisualShaderNodeFloatOp_81l6r")
+nodes/fragment/7/position = Vector2(1293.3334, 986.6667)
+nodes/fragment/8/node = SubResource("VisualShaderNodeFloatOp_rsfmq")
+nodes/fragment/8/position = Vector2(493.33334, 840)
+nodes/fragment/9/node = SubResource("VisualShaderNodeVectorDecompose_oi1it")
+nodes/fragment/9/position = Vector2(-40, 1226.6666)
+nodes/fragment/11/node = SubResource("VisualShaderNodeVectorDecompose_vjb58")
+nodes/fragment/11/position = Vector2(-13.333333, 733.3333)
+nodes/fragment/12/node = SubResource("VisualShaderNodeFloatOp_con2f")
+nodes/fragment/12/position = Vector2(1066.6666, 1213.3334)
+nodes/fragment/13/node = SubResource("VisualShaderNodeInput_mhnvy")
+nodes/fragment/13/position = Vector2(666.6667, 626.6667)
+nodes/fragment/14/node = SubResource("VisualShaderNodeInput_4ytvr")
+nodes/fragment/14/position = Vector2(-1240, 933.3333)
+nodes/fragment/15/node = SubResource("VisualShaderNodeFloatConstant_g3eks")
+nodes/fragment/15/position = Vector2(666.6667, 1213.3334)
+nodes/fragment/16/node = SubResource("VisualShaderNodeFloatOp_v86rl")
+nodes/fragment/16/position = Vector2(866.6667, 906.6667)
+nodes/fragment/19/node = SubResource("VisualShaderNodeFloatOp_13sgg")
+nodes/fragment/19/position = Vector2(226.66667, 653.3333)
+nodes/fragment/20/node = SubResource("VisualShaderNodeTexture_70i5f")
+nodes/fragment/20/position = Vector2(200, 1000)
+nodes/fragment/21/node = SubResource("VisualShaderNodeVectorOp_mj5lg")
+nodes/fragment/21/position = Vector2(-840, 1280)
+nodes/fragment/22/node = SubResource("VisualShaderNodeVectorFunc_ufwb2")
+nodes/fragment/22/position = Vector2(-640, 920)
+nodes/fragment/23/node = SubResource("VisualShaderNodeVectorOp_6cdou")
+nodes/fragment/23/position = Vector2(-466.66666, 1266.6666)
+nodes/fragment/24/node = SubResource("VisualShaderNodeVectorOp_i42df")
+nodes/fragment/24/position = Vector2(-266.66666, 906.6667)
+nodes/fragment/connections = PackedInt32Array(2, 0, 4, 0, 4, 0, 5, 0, 5, 0, 6, 0, 9, 1, 12, 1, 7, 0, 4, 1, 6, 0, 0, 0, 13, 0, 2, 0, 12, 0, 7, 1, 8, 0, 3, 0, 3, 0, 16, 0, 15, 0, 16, 1, 11, 0, 19, 0, 9, 1, 19, 1, 16, 0, 12, 0, 2, 0, 7, 0, 19, 0, 8, 0, 20, 0, 8, 1, 14, 0, 21, 0, 21, 0, 22, 0, 22, 0, 23, 0, 23, 0, 24, 0, 24, 0, 11, 0, 24, 0, 9, 0)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_6wigr"]
+shader = SubResource("VisualShader_fy8yy")
+
+[node name="Menu" type="Control" unique_id=1458814360]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = SubResource("Theme_con2f")
 script = ExtResource("1_menu")
 
-[node name="Toast" type="Label" parent="."]
+[node name="ColorRect" type="ColorRect" parent="." unique_id=1475988128]
+material = SubResource("ShaderMaterial_6wigr")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Toast" type="Label" parent="." unique_id=1586047595]
+modulate = Color(1, 0.5, 0.5, 1)
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -24,10 +192,9 @@ offset_right = 320.0
 offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 0
-modulate = Color(1, 0.5, 0.5, 1)
 horizontal_alignment = 1
 
-[node name="MainPanel" type="CenterContainer" parent="."]
+[node name="MainPanel" type="CenterContainer" parent="." unique_id=354402861]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -35,33 +202,33 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="MainBox" type="VBoxContainer" parent="MainPanel"]
+[node name="MainBox" type="VBoxContainer" parent="MainPanel" unique_id=1065131762]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="MainTitle" type="Label" parent="MainPanel/MainBox"]
+[node name="MainTitle" type="Label" parent="MainPanel/MainBox" unique_id=1123188216]
 layout_mode = 2
 theme_override_font_sizes/font_size = 40
 text = "DURAK"
 horizontal_alignment = 1
 
-[node name="SingleplayerButton" type="Button" parent="MainPanel/MainBox"]
+[node name="SingleplayerButton" type="Button" parent="MainPanel/MainBox" unique_id=1722632212]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Singleplayer"
 
-[node name="MultiplayerButton" type="Button" parent="MainPanel/MainBox"]
+[node name="MultiplayerButton" type="Button" parent="MainPanel/MainBox" unique_id=374969825]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Multiplayer"
 
-[node name="QuitButton" type="Button" parent="MainPanel/MainBox"]
+[node name="QuitButton" type="Button" parent="MainPanel/MainBox" unique_id=1709899201]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Quit"
 
-[node name="BrowsePanel" type="CenterContainer" parent="."]
+[node name="BrowsePanel" type="CenterContainer" parent="." unique_id=672873834]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -70,61 +237,61 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="BrowseBox" type="VBoxContainer" parent="BrowsePanel"]
+[node name="BrowseBox" type="VBoxContainer" parent="BrowsePanel" unique_id=51678022]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="BrowseTitle" type="Label" parent="BrowsePanel/BrowseBox"]
+[node name="BrowseTitle" type="Label" parent="BrowsePanel/BrowseBox" unique_id=1438448068]
 layout_mode = 2
 theme_override_font_sizes/font_size = 40
 text = "Multiplayer"
 horizontal_alignment = 1
 
-[node name="ListPubliclyCheck" type="CheckButton" parent="BrowsePanel/BrowseBox"]
+[node name="ListPubliclyCheck" type="CheckButton" parent="BrowsePanel/BrowseBox" unique_id=237224028]
 layout_mode = 2
 button_pressed = true
 text = "List publicly"
 
-[node name="HostButton" type="Button" parent="BrowsePanel/BrowseBox"]
+[node name="HostButton" type="Button" parent="BrowsePanel/BrowseBox" unique_id=963498472]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Host Game"
 
-[node name="HSeparator1" type="HSeparator" parent="BrowsePanel/BrowseBox"]
+[node name="HSeparator1" type="HSeparator" parent="BrowsePanel/BrowseBox" unique_id=1721633865]
 layout_mode = 2
 
-[node name="CodeRow" type="HBoxContainer" parent="BrowsePanel/BrowseBox"]
+[node name="CodeRow" type="HBoxContainer" parent="BrowsePanel/BrowseBox" unique_id=229830347]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="CodeField" type="LineEdit" parent="BrowsePanel/BrowseBox/CodeRow"]
+[node name="CodeField" type="LineEdit" parent="BrowsePanel/BrowseBox/CodeRow" unique_id=18056641]
 custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
 placeholder_text = "invite code"
 
-[node name="JoinByCodeButton" type="Button" parent="BrowsePanel/BrowseBox/CodeRow"]
+[node name="JoinByCodeButton" type="Button" parent="BrowsePanel/BrowseBox/CodeRow" unique_id=1811162875]
 layout_mode = 2
 text = "Join by Code"
 
-[node name="HSeparator2" type="HSeparator" parent="BrowsePanel/BrowseBox"]
+[node name="HSeparator2" type="HSeparator" parent="BrowsePanel/BrowseBox" unique_id=395750396]
 layout_mode = 2
 
-[node name="RefreshButton" type="Button" parent="BrowsePanel/BrowseBox"]
+[node name="RefreshButton" type="Button" parent="BrowsePanel/BrowseBox" unique_id=433660396]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Refresh List"
 
-[node name="ResultsBox" type="VBoxContainer" parent="BrowsePanel/BrowseBox"]
+[node name="ResultsBox" type="VBoxContainer" parent="BrowsePanel/BrowseBox" unique_id=541878974]
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="BackButton" type="Button" parent="BrowsePanel/BrowseBox"]
+[node name="BackButton" type="Button" parent="BrowsePanel/BrowseBox" unique_id=1673972763]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Back"
 
-[node name="RoomPanel" type="CenterContainer" parent="."]
+[node name="RoomPanel" type="CenterContainer" parent="." unique_id=947136480]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -133,54 +300,54 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="RoomBox" type="VBoxContainer" parent="RoomPanel"]
+[node name="RoomBox" type="VBoxContainer" parent="RoomPanel" unique_id=258461825]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="RoomTitle" type="Label" parent="RoomPanel/RoomBox"]
+[node name="RoomTitle" type="Label" parent="RoomPanel/RoomBox" unique_id=652290990]
 layout_mode = 2
 theme_override_font_sizes/font_size = 40
 text = "Lobby"
 horizontal_alignment = 1
 
-[node name="MembersBox" type="VBoxContainer" parent="RoomPanel/RoomBox"]
+[node name="MembersBox" type="VBoxContainer" parent="RoomPanel/RoomBox" unique_id=772685174]
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="HSeparator3" type="HSeparator" parent="RoomPanel/RoomBox"]
+[node name="HSeparator3" type="HSeparator" parent="RoomPanel/RoomBox" unique_id=2130945165]
 layout_mode = 2
 
-[node name="InviteCodeRow" type="HBoxContainer" parent="RoomPanel/RoomBox"]
+[node name="InviteCodeRow" type="HBoxContainer" parent="RoomPanel/RoomBox" unique_id=1522155775]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="InviteCodeLabel" type="Label" parent="RoomPanel/RoomBox/InviteCodeRow"]
+[node name="InviteCodeLabel" type="Label" parent="RoomPanel/RoomBox/InviteCodeRow" unique_id=1005959168]
 layout_mode = 2
 text = "Invite code:"
 
-[node name="CopyButton" type="Button" parent="RoomPanel/RoomBox/InviteCodeRow"]
+[node name="CopyButton" type="Button" parent="RoomPanel/RoomBox/InviteCodeRow" unique_id=1835137638]
 layout_mode = 2
 text = "Copy"
 
-[node name="InviteFriendsButton" type="Button" parent="RoomPanel/RoomBox"]
+[node name="InviteFriendsButton" type="Button" parent="RoomPanel/RoomBox" unique_id=728240939]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Invite Friends…"
 
-[node name="StartButton" type="Button" parent="RoomPanel/RoomBox"]
+[node name="StartButton" type="Button" parent="RoomPanel/RoomBox" unique_id=807358297]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Start Game"
 
-[node name="HintLabel" type="Label" parent="RoomPanel/RoomBox"]
+[node name="HintLabel" type="Label" parent="RoomPanel/RoomBox" unique_id=1343615636]
 layout_mode = 2
 text = "Waiting for the host to start…"
 horizontal_alignment = 1
 autowrap_mode = 3
 
-[node name="LeaveButton" type="Button" parent="RoomPanel/RoomBox"]
+[node name="LeaveButton" type="Button" parent="RoomPanel/RoomBox" unique_id=1273964319]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Leave Lobby"
