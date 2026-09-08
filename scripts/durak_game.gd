@@ -131,14 +131,6 @@ func get_all_legal_actions() -> Array[Dictionary]:
 	return all_actions
 
 
-func players_to_act() -> Array[int]:
-	var actors: Array[int] = []
-	for seat in num_players:
-		if not get_legal_actions(seat).is_empty():
-			actors.append(seat)
-	return actors
-
-
 func talon_count() -> int:
 	return deck.size()
 

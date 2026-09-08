@@ -3,8 +3,6 @@ extends RefCounted
 ## Plain card value used by the game logic. Not a node, not drawn.
 ## The view maps one of these to a `card.tscn` instance for display.
 
-enum Suit { CLUBS, DIAMONDS, HEARTS, SPADES }
-
 const SUIT_NAMES := ["clubs", "diamonds", "hearts", "spades"]
 const RANK_NAMES := {11: "J", 12: "Q", 13: "K", 14: "A"}
 
@@ -32,10 +30,6 @@ func beats(attack: CardData, trump_suit: int) -> bool:
 	if suit == attack.suit:
 		return rank > attack.rank
 	return suit == trump_suit and attack.suit != trump_suit
-
-
-func is_trump(trump_suit: int) -> bool:
-	return suit == trump_suit
 
 
 func _to_string() -> String:
