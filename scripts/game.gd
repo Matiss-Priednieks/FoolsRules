@@ -314,12 +314,13 @@ func _close_menu() -> void:
 	_pause_overlay.visible = false
 
 
-## The host vanished (or the RPC connection died) mid-match - bail out instead
-## of sitting there frozen with no feedback. SteamLobby.leave() already ran by
-## the time this signal fires.
+## The host vanished, the RPC connection died, or a client mirror desynced -
+## bail out instead of sitting there frozen with no feedback.
 func _on_disconnected_unexpectedly(reason: String) -> void:
 	NetSession.pending_message = reason
 	NetSession.active = false
+	if SteamLobby.in_lobby:
+		SteamLobby.leave() # release the peer/socket so the next game can host
 	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
@@ -456,7 +457,7 @@ func _perform(action: Dictionary) -> void:
 	if _is_authority():
 		await _apply_and_animate(action)
 		if NetSession.active and multiplayer.has_multiplayer_peer():
-			net_apply_action.rpc(_action_to_wire(action))
+			_broadcast_applied(action)
 	elif not multiplayer.has_multiplayer_peer():
 		# the connection to the host is gone - stop trying to talk to it
 		_awaiting_ack = false
@@ -505,14 +506,55 @@ func net_request_action(wire: Dictionary) -> void:
 func _drain_incoming_requests() -> void:
 	_draining_requests = true
 	while not _incoming_requests.is_empty():
+		while _busy: # resolve against a settled state, not one mid-animation
+			await get_tree().process_frame
 		var entry: Dictionary = _incoming_requests.pop_front()
 		var action := _resolve_wire_action(entry.wire, entry.seat)
 		if not action.is_empty(): # else stale/illegal - the sender's watchdog will retry
 			_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
 			await _apply_and_animate(action)
-			net_apply_action.rpc(_action_to_wire(action))
+			_broadcast_applied(action)
 	_draining_requests = false
 	_run_bot_turns()
+
+
+## Host -> clients: the action just applied, plus a fingerprint of the resulting
+## game state so a client can catch the instant its mirror drifts.
+func _broadcast_applied(action: Dictionary) -> void:
+	var wire := _action_to_wire(action)
+	wire["fp"] = _state_fingerprint()
+	net_apply_action.rpc(wire)
+
+
+## Cheap, order-sensitive hash of everything a replayed action stream must keep
+## identical across peers. Not the CardData identities - suit/rank multisets.
+func _state_fingerprint() -> int:
+	var parts: Array = [
+		game.attacker, game.defender, game.phase,
+		game.deck.size(), game.discard.size(), game.attack_limit,
+	]
+	parts.append_array(game.is_out)
+	parts.append_array(game.finish_order)
+	parts.append(game.passed.keys().size())
+	for pair in game.table:
+		parts.append(pair.attack.suit * 100 + pair.attack.rank)
+		parts.append(-1 if pair.defense == null else pair.defense.suit * 100 + pair.defense.rank)
+	for hand in game.hands:
+		var ranks: Array = []
+		for c in hand:
+			ranks.append(c.suit * 100 + c.rank)
+		ranks.sort()
+		parts.append(ranks)
+	return str(parts).hash()
+
+
+func _state_debug() -> String:
+	var sizes: Array = []
+	for hand in game.hands:
+		sizes.append(hand.size())
+	return "atk=%d def=%d phase=%d talon=%d discard=%d out=%s finish=%s hands=%s table=%d" % [
+		game.attacker, game.defender, game.phase, game.deck.size(), game.discard.size(),
+		game.is_out, game.finish_order, sizes, game.table.size()]
 
 
 ## The host -> everyone broadcast of an action it just applied. Runs on clients.
@@ -526,14 +568,30 @@ func net_apply_action(wire: Dictionary) -> void:
 func _drain_incoming_broadcasts() -> void:
 	_draining_broadcasts = true
 	while not _incoming_broadcasts.is_empty():
+		while _busy: # apply each broadcast against a settled mirror, in order
+			await get_tree().process_frame
 		var wire: Dictionary = _incoming_broadcasts.pop_front()
 		var seat: int = wire.get("player", -1)
 		var action := _resolve_wire_action(wire, seat)
 		if seat == human_seat:
 			_awaiting_ack = false
-		if not action.is_empty():
-			await _apply_and_animate(action)
+		if action.is_empty():
+			push_error("[net] DESYNC: can't apply host action %s | %s" % [wire, _state_debug()])
+			_bail_desync()
+			return
+		await _apply_and_animate(action)
+		if wire.has("fp") and int(wire.fp) != _state_fingerprint():
+			push_error("[net] DESYNC after %s: host fp=%d mine=%d | %s" % [
+				wire, int(wire.fp), _state_fingerprint(), _state_debug()])
+			_bail_desync()
+			return
 	_draining_broadcasts = false
+
+
+func _bail_desync() -> void:
+	_draining_broadcasts = false
+	_incoming_broadcasts.clear()
+	_on_disconnected_unexpectedly("Desynced from the host — returning to the menu.")
 
 
 ## Host-only. Two transports feed this: a LAN test fills NetSession.seat_peer_id
@@ -614,7 +672,13 @@ func _resolve_wire_action(wire: Dictionary, seat: int) -> Dictionary:
 ## sequence: the played card first, then the table clearing (all beaten -> the
 ## discard, or the defender takes it), then each seat's refill from the talon in
 ## turn order. Ends by settling every sprite to the true final layout.
+##
+## Serialized: two of these must never overlap or their game.apply_action()
+## calls interleave and the mirrors desync. Every caller (the bot loop, both
+## RPC drain loops, the local input paths) funnels through this one wait.
 func _apply_and_animate(action: Dictionary) -> void:
+	while _busy:
+		await get_tree().process_frame
 	var run_id := _game_id
 	_busy = true
 	_waiting_for_human = false
