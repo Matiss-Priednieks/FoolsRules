@@ -55,6 +55,14 @@ func _ready() -> void:
 	persona_name = str(_steam.getPersonaName())
 	print("[Steam] ready as %s (%d)" % [persona_name, steam_id])
 
+	# Warm up the Steam Datagram Relay now. The multiplayer peer routes through it
+	# (set_server_relay), and SDR takes a few seconds to come online after Steam
+	# init - if the first host attempt beats it, createListenSocketP2P fails and
+	# the lobby's networking is dead. Kicking it off here means it's ready by the
+	# time anyone opens a lobby.
+	if _steam.has_method("initRelayNetworkAccess"):
+		_steam.initRelayNetworkAccess()
+
 	_steam.connect("user_stats_received", _on_user_stats_received)
 	_steam.connect("overlay_toggled", _on_overlay_toggled)
 	_steam.requestUserStats(steam_id)  # -> user_stats_received; needed before setAchievement

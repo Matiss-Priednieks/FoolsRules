@@ -129,9 +129,10 @@ func _teardown_peer() -> void:
 		if multiplayer.is_connected(pair[0], pair[1]):
 			multiplayer.disconnect(pair[0], pair[1])
 	# Detaching the peer from the MultiplayerAPI drops the last strong ref (it's
-	# RefCounted) and lets its destructor close the Steam socket. Calling
+	# RefCounted) and lets its destructor close the Steam listen socket. Calling
 	# _peer.close() explicitly here crashed GodotSteam v4.22 on the second host,
-	# so don't - just release it and give Steam a beat (see _start_peer).
+	# so don't - release it and let _start_peer's back-off give Steam time to
+	# actually free the socket before the next host attempt.
 	if multiplayer.has_multiplayer_peer():
 		multiplayer.multiplayer_peer = null
 	_peer = null
@@ -332,41 +333,54 @@ func _read_player_count() -> void:
 		player_count = clampi(int(raw), 2, MAX_PLAYERS)
 
 
+## Bring up the SteamMultiplayerPeer for this lobby. Opening the Steam Datagram
+## Relay listen socket can transiently fail - the relay backend is still coming
+## online, Steam's servers are mid-restart, or the previous lobby's socket hasn't
+## finished releasing - so this retries with a growing back-off before giving up.
 func _start_peer(as_host: bool) -> void:
 	if not ClassDB.class_exists("SteamMultiplayerPeer"):
 		return
-	var had_socket := _peer != null or multiplayer.has_multiplayer_peer()
-	_teardown_peer()  # release any socket left open by a previous lobby
-	if had_socket:
-		# close() isn't reliably synchronous - let Steam pump a few callbacks
-		# before we ask for a fresh listen socket, or it comes back err-20.
-		await get_tree().create_timer(0.35).timeout
+
+	# First try is near-immediate; later tries wait longer to ride out a relay
+	# blip or a slow socket release.
+	var backoff := [0.05, 0.75, 1.5, 3.0]
+	for attempt in backoff.size():
 		if not in_lobby:
 			return
-	_peer = ClassDB.instantiate("SteamMultiplayerPeer")
-	# Direct P2P between two real machines routinely fails to punch through NAT/
-	# firewalls even though the peer object itself is created successfully -
-	# the connection just never actually completes, and every later RPC call
-	# errors as "not connected". Steam's relay network (SDR) is the fallback for
-	# exactly that; it has to be turned on before the connection attempt starts.
-	if _peer.has_method("set_server_relay"):
-		_peer.set_server_relay(true)
-	var err := OK
-	if as_host:
-		err = _peer.host_with_lobby(lobby_id) if _peer.has_method("host_with_lobby") else _peer.create_host(0)
-	else:
-		err = _peer.connect_to_lobby(lobby_id) if _peer.has_method("connect_to_lobby") else _peer.create_client(int(_steam.getLobbyOwner(lobby_id)), 0)
-	if err != OK:
-		push_warning("[Lobby] SteamMultiplayerPeer setup failed (%s)." % err)
-		lobby_error.emit("Couldn't open the connection (error %s). If this keeps happening, restart the game." % err)
-		_peer = null
-		return
-	multiplayer.multiplayer_peer = _peer
-	print("[Lobby] peer started (%s), status=%d" % ["host" if as_host else "client", _peer.get_connection_status()])
-	multiplayer.peer_connected.connect(_on_peer_connected)
-	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	multiplayer.connection_failed.connect(_on_connection_failed)
-	multiplayer.server_disconnected.connect(_on_server_disconnected)
+		_teardown_peer()  # also clears anything a failed previous attempt left
+		await get_tree().create_timer(backoff[attempt]).timeout
+		if not in_lobby:
+			return
+
+		_peer = ClassDB.instantiate("SteamMultiplayerPeer")
+		# Direct P2P between two real machines routinely fails to punch through
+		# NAT/firewalls even though the peer object is created fine - the
+		# connection just never completes and every later RPC errors as "not
+		# connected". Steam's relay network (SDR) is the fallback; it has to be
+		# on before the connection attempt starts.
+		if _peer.has_method("set_server_relay"):
+			_peer.set_server_relay(true)
+		var err := OK
+		if as_host:
+			err = _peer.host_with_lobby(lobby_id) if _peer.has_method("host_with_lobby") else _peer.create_host(0)
+		else:
+			err = _peer.connect_to_lobby(lobby_id) if _peer.has_method("connect_to_lobby") else _peer.create_client(int(_steam.getLobbyOwner(lobby_id)), 0)
+
+		if err == OK:
+			multiplayer.multiplayer_peer = _peer
+			print("[Lobby] peer started (%s) on attempt %d, status=%d"
+				% ["host" if as_host else "client", attempt + 1, _peer.get_connection_status()])
+			multiplayer.peer_connected.connect(_on_peer_connected)
+			multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+			multiplayer.connection_failed.connect(_on_connection_failed)
+			multiplayer.server_disconnected.connect(_on_server_disconnected)
+			return
+
+		push_warning("[Lobby] peer setup attempt %d/%d failed (%s)"
+			% [attempt + 1, backoff.size(), err])
+		_peer = null  # drop the ref; next loop's _teardown_peer + wait lets it release
+
+	lobby_error.emit("Steam networking didn't come up (it may be having a wobble - Steam server restarts do this). Leave the lobby and try again in a minute.")
 
 
 func _on_peer_connected(id: int) -> void:
