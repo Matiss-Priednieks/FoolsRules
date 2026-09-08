@@ -187,8 +187,8 @@ func _refresh_browse() -> void:
 
 
 func _refresh_room() -> void:
-	if _screen != Screen.ROOM:
-		return
+	if _screen != Screen.ROOM or not is_inside_tree():
+		return  # can be pinged by a late Steam callback mid scene-change
 	for child in _members_box.get_children():
 		child.queue_free()
 	var taken := SteamLobby.seats_taken()
