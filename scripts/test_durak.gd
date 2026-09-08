@@ -9,9 +9,8 @@ const GAMES := 3000
 const STEP_GUARD := 20000
 
 
-## games in which a legal "deflect" was ever offered - coverage guard for the
-## §8.3 tightening, not a hard assertion. If this hits 0 the restriction is
-## too aggressive and deflect has become dead.
+## games in which a legal "deflect" was ever offered - coverage tally for the
+## deflect legality rule, not a hard assertion.
 static var _deflect_seen := 0
 
 

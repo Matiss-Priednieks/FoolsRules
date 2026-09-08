@@ -20,8 +20,6 @@ extends RefCounted
 ##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
-##   - deflect is only legal on the lone opening attack (spec 8.3); chained
-##     deflects past the first are not modelled yet
 ##   - 5-6 player pools (spec 3.5) need a base deck larger than 36; not built
 
 signal state_changed
@@ -272,12 +270,19 @@ func _can_add_attack(seat: int) -> bool:
 
 
 func _can_deflect() -> bool:
-	# spec 8.3: a narrow early-window escape hatch. Legal only on the lone opening
-	# attack (no throw-ins), unbeaten, and only if the next player could face the
-	# enlarged attack. A card of matching rank still has to be in hand (checked by
-	# the caller). Riveted (a future special) will veto this via a query hook.
-	if phase != Phase.DEFEND or table.size() != 1 or table[0].defense != null:
+	# Standard perevod: you can pass the whole pile on as long as every card on
+	# the table is the lead rank and nothing has been beaten yet - same-rank
+	# throw-ins (from anyone) don't lock it, a defence or an off-rank card does.
+	# The off-rank check also handles a future special that lets non-matching
+	# cards be thrown in: that card makes the pile un-passable. The next player
+	# must be able to face the enlarged attack. A matching-rank card in hand is
+	# checked by the caller; Riveted (future) will veto via a query hook.
+	if phase != Phase.DEFEND or table.is_empty():
 		return false
+	var lead_rank: int = table[0].attack.rank
+	for pair in table:
+		if pair.defense != null or pair.attack.rank != lead_rank:
+			return false
 	var new_defender := _next_active(defender)
 	if new_defender == defender or new_defender == attacker:
 		return false
