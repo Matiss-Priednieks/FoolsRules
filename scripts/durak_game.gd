@@ -25,8 +25,10 @@ extends RefCounted
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)
 
-const HAND_SIZE := 6     # the refill target for a plain hand; _refill_target() may raise/lower it
-const MIN_RANK := 6      # 36-card deck: 6..A
+const HAND_SIZE := 6      # the refill target for a plain hand; _refill_target() may raise/lower it
+const MIN_RANK := 6       # a 4-or-fewer-player game uses the classic 36-card deck (6..A)
+const MIN_RANK_BIG := 2   # 5+ players: full 2..A ranks, and more than one deck if the pool needs it
+const MAX_PLAYERS := 24   # the hard ceiling; the board and balance are only really tuned to ~6
 
 enum Phase { ATTACK, DEFEND, TAKING, GAME_OVER }
 
@@ -70,7 +72,7 @@ var _rng := RandomNumberGenerator.new()
 
 
 func _init(players: int = 4, game_seed: int = 0) -> void:
-	num_players = players
+	num_players = clampi(players, 2, MAX_PLAYERS)
 	seed_used = game_seed if game_seed != 0 else \
 		int(Time.get_unix_time_from_system() * 1000.0) & 0x7fffffff
 	_rng.seed = seed_used
@@ -145,7 +147,7 @@ func is_finished() -> bool:
 	return phase == Phase.GAME_OVER
 
 
-func total_card_count() -> int:  # invariant helper: always 36
+func total_card_count() -> int:  # invariant helper: always == pool_size()
 	var total := deck.size() + discard.size()
 	for pair in table:
 		total += 1
@@ -180,12 +182,17 @@ func _build_and_deal() -> void:
 		hands.append([] as Array[CardData])
 		is_out.append(false)
 
-	for suit in 4:
-		for rank in range(MIN_RANK, 15):
-			deck.append(CardData.new(suit, rank))
+	# spec 3.5: cards in circulation set the match clock (pool_size = 6/player + 12).
+	# <=4 players: the classic single 36-card deck. 5+: full 2..A ranks, and as
+	# many stacked decks as the pool needs (so 7+ players draw with duplicates).
+	var min_rank := MIN_RANK if num_players <= 4 else MIN_RANK_BIG
+	var per_deck := 4 * (15 - min_rank)
+	var decks := maxi(1, ceili(float(pool_size()) / per_deck))
+	for _copy in decks:
+		for suit in 4:
+			for rank in range(min_rank, 15):
+				deck.append(CardData.new(suit, rank))
 	_shuffle(deck)
-	# spec 3.5: cards in circulation set the match clock. 4p = 36 (unchanged);
-	# fewer players draw a smaller pool. 5-6p want a bigger base deck - not built.
 	if deck.size() > pool_size():
 		deck.resize(pool_size())
 

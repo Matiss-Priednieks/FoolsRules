@@ -2,11 +2,14 @@ extends SceneTree
 ## Headless fuzz test for the rules engine.
 ##   godot --headless --script res://scripts/test_durak.gd
 ## Plays many random-legal games and checks that every one terminates, that
-## cards are conserved (pool_size() total, all distinct, at every step), and
-## that no bug signatures show up.
+## cards are conserved (pool_size() total, at every step), and that no bug
+## signatures show up. Cycles through a spread of player counts, since the
+## engine is meant to run 2..MAX_PLAYERS now (7+ deal from stacked decks, so
+## duplicate suit+rank is expected - only the total count is invariant).
 
 const GAMES := 3000
-const STEP_GUARD := 20000
+const STEP_GUARD := 40000
+const PLAYER_COUNTS := [2, 3, 4, 5, 6, 8, 12]
 
 
 ## games in which a legal "deflect" was ever offered - coverage tally for the
@@ -16,20 +19,20 @@ static var _deflect_seen := 0
 
 func _initialize() -> void:
 	var failures := 0
-	var loser_tally := {-1: 0, 0: 0, 1: 0, 2: 0, 3: 0}
 	var longest := 0
+	var by_count := {}
 
 	for i in GAMES:
-		var result := _play_random_game(i + 1)
+		var players: int = PLAYER_COUNTS[i % PLAYER_COUNTS.size()]
+		var result := _play_random_game(i + 1, players)
 		longest = maxi(longest, result.steps)
-		if result.ok:
-			loser_tally[result.loser] += 1
-		else:
+		by_count[players] = by_count.get(players, 0) + 1
+		if not result.ok:
 			failures += 1
-			push_error("seed %d, step %d: %s" % [i + 1, result.steps, result.msg])
+			push_error("seed %d (%dp), step %d: %s" % [i + 1, players, result.steps, result.msg])
 
 	print("ran %d games | failures: %d | longest game: %d steps" % [GAMES, failures, longest])
-	print("loser distribution (-1 = draw): %s" % loser_tally)
+	print("games per player count: %s" % by_count)
 	print("games where deflect was offered: %d / %d" % [_deflect_seen, GAMES])
 	quit(1 if failures > 0 else 0)
 
@@ -37,9 +40,9 @@ func _initialize() -> void:
 var _this_game_saw_deflect := false
 
 
-func _play_random_game(game_seed: int) -> Dictionary:
+func _play_random_game(game_seed: int, players: int) -> Dictionary:
 	seed(game_seed)
-	var game := DurakGame.new(4, game_seed)
+	var game := DurakGame.new(players, game_seed)
 	var steps := 0
 	_this_game_saw_deflect = false
 
@@ -80,9 +83,10 @@ func _play_random_game(game_seed: int) -> Dictionary:
 
 	var sorted_order: Array = game.finish_order.duplicate()
 	sorted_order.sort()
-	if sorted_order != [0, 1, 2, 3]:
+	var expected: Array = range(game.num_players)
+	if sorted_order != expected:
 		return {ok = false, steps = steps,
-			msg = "finish_order not a permutation: %s" % game.finish_order}
+			msg = "finish_order not a permutation of %s: %s" % [expected, game.finish_order]}
 
 	return {ok = true, steps = steps, loser = game.loser}
 
@@ -92,14 +96,8 @@ func _check_invariants(game: DurakGame) -> String:
 	if game.total_card_count() != pool:
 		return "card count = %d (pool %d)" % [game.total_card_count(), pool]
 
-	var seen := {}
-	for card in _all_cards(game):
-		var key: int = card.suit * 100 + card.rank
-		if seen.has(key):
-			return "duplicate card %s" % card
-		seen[key] = true
-	if seen.size() != pool:
-		return "distinct cards = %d (pool %d)" % [seen.size(), pool]
+	if _all_cards(game).size() != pool:
+		return "loose card count = %d (pool %d)" % [_all_cards(game).size(), pool]
 
 	if not game.is_finished():
 		if game.defender == game.attacker:
