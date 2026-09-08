@@ -26,9 +26,11 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
 
 @export_group("Card feel")
-@export_range(0.0, 120.0, 1.0) var hover_raise := 46.0 ## px a hovered hand card lifts
-@export_range(1.0, 1.6, 0.01) var hover_scale := 1.12 ## size multiplier while hovered
-@export_range(0.0, 25.0, 0.5) var hover_tilt := 8.0 ## deg a hovered card leans toward the cursor (Balatro-ish)
+@export_range(0.0, 160.0, 1.0) var hover_raise := 62.0 ## px a hovered hand card lifts
+@export_range(1.0, 1.8, 0.01) var hover_scale := 1.18 ## size multiplier while hovered
+@export_range(0.0, 40.0, 0.5) var hover_tilt := 10.0 ## deg of flat Z-spin a hovered card leans toward the cursor
+@export_range(0.0, 60.0, 1.0) var hover_3d := 30.0 ## deg of fake-3D perspective tilt toward the cursor (card_fx.gdshader)
+@export_range(0.0, 24.0, 0.5) var hover_float := 5.0 ## px of gentle idle drift while a card is raised
 @export_range(0.05, 1.0, 0.01) var hand_follow := 0.30 ## how fast hand cards ease to their slot
 @export_range(0.05, 1.0, 0.01) var drag_follow := 0.40 ## how fast a dragged card chases the cursor
 
@@ -68,7 +70,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export var talon_pos := Vector2(250, 560)
 @export var discard_pos := Vector2(1690, 560)
 @export var table_drop_rect := Rect2(500, 350, 920, 380) ## where a dragged card counts as "on the table"
-@export var translate_strip_rect := Rect2(660, 232, 600, 96) ## the "pass the attack on" drop strip
+@export var deflect_strip_rect := Rect2(660, 232, 600, 96) ## the "pass the attack on" drop strip
 @export var confirm_pass_pos := Vector2(1520, 610) ## Confirm and Pass share this slot - only one is ever visible at once
 @export var take_button_pos := Vector2(1520, 690)
 
@@ -90,12 +92,17 @@ var game: DurakGame
 @onready var _confirm_button: Button = $UI/Root/ConfirmButton
 @onready var _take_button: Button = $UI/Root/TakeButton
 @onready var _pass_button: Button = $UI/Root/PassButton
-@onready var _translate_strip: ColorRect = $UI/Root/TranslateStrip # "drop here to pass the attack on"
+@onready var _deflect_strip: ColorRect = $UI/Root/DeflectStrip # "drop here to pass the attack on"
 @onready var _end_screen: ColorRect = $UI/Root/EndScreen
 @onready var _end_title: Label = $UI/Root/EndScreen/EndTitle
 @onready var _end_standings: Label = $UI/Root/EndScreen/EndStandings
 @onready var _again_button: Button = $UI/Root/EndScreen/AgainButton
 @onready var _menu_button: Button = $UI/Root/EndScreen/MenuButton
+@onready var _pause_button: Button = $UI/Root/PauseButton
+@onready var _pause_overlay: Control = $UI/Root/PauseOverlay
+@onready var _pause_resume: Button = $UI/Root/PauseOverlay/ResumeButton
+@onready var _pause_restart: Button = $UI/Root/PauseOverlay/RestartButton
+@onready var _pause_quit: Button = $UI/Root/PauseOverlay/QuitButton
 
 # --- view bookkeeping --------------------------------------------------------
 var _card_views: Dictionary = {} # CardData   -> Sprite2D (one per face-up card)
@@ -115,6 +122,7 @@ var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten at
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
+var _menu_open := false # the mid-game menu overlay is up; blocks board input, does NOT pause
 var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
@@ -161,8 +169,8 @@ func _ready() -> void:
 	_set_slot_marker_points(_discard_marker, discard_card_height)
 	_place_slots()
 	# these are tunable exports, not baked into the scene
-	_translate_strip.position = translate_strip_rect.position
-	_translate_strip.size = translate_strip_rect.size
+	_deflect_strip.position = deflect_strip_rect.position
+	_deflect_strip.size = deflect_strip_rect.size
 	_confirm_button.position = confirm_pass_pos
 	_pass_button.position = confirm_pass_pos
 	_take_button.position = take_button_pos
@@ -173,6 +181,10 @@ func _ready() -> void:
 	_pass_button.pressed.connect(_on_pass)
 	_again_button.pressed.connect(_restart)
 	_menu_button.pressed.connect(_to_menu)
+	_pause_button.pressed.connect(_open_menu)
+	_pause_resume.pressed.connect(_close_menu)
+	_pause_restart.pressed.connect(_restart)
+	_pause_quit.pressed.connect(_to_menu)
 
 	RenderingServer.set_default_clear_color(Color(0.05, 0.22, 0.12))
 	_new_game()
@@ -281,6 +293,21 @@ func _to_menu() -> void:
 	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
+## Mid-game menu overlay. The game keeps running underneath (bots move, cards
+## animate) - the overlay just eats board input via its full-rect Control while
+## it's up, so you can't drag or click a contextual button behind it.
+func _open_menu() -> void:
+	_menu_open = true
+	_drag = {} # drop any card being held
+	_pause_restart.visible = not NetSession.active # no synced redeal in multiplayer
+	_pause_overlay.visible = true
+
+
+func _close_menu() -> void:
+	_menu_open = false
+	_pause_overlay.visible = false
+
+
 ## The host vanished (or the RPC connection died) mid-match - bail out instead
 ## of sitting there frozen with no feedback. SteamLobby.leave() already ran by
 ## the time this signal fires.
@@ -294,6 +321,8 @@ func _restart() -> void:
 	if NetSession.active:
 		_to_menu() # multiplayer has no redeal button yet
 		return
+	_close_menu()
+	_pause_button.visible = true
 	_end_screen.visible = false
 	for view in _card_views.values():
 		if is_instance_valid(view):
@@ -347,6 +376,8 @@ func _show_end_screen(loser: int) -> void:
 		var outcome := "durak" if i == game.finish_order.size() - 1 else "safe"
 		rows.append("%d.  %s  —  %s" % [i + 1, who, outcome])
 	_end_standings.text = "\n".join(rows)
+	_close_menu() # in case the game ended while the menu was up
+	_pause_button.visible = false
 	_end_screen.visible = true
 
 
@@ -893,7 +924,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			[KEY_SPACE, KEY_ENTER, KEY_KP_ENTER]:
 			_restart()
 		return
-	if not _waiting_for_human or _awaiting_ack:
+	if event.is_action_pressed("ui_cancel"): # Esc toggles the mid-game menu
+		_close_menu() if _menu_open else _open_menu()
+		return
+	if _menu_open or not _waiting_for_human or _awaiting_ack:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -935,10 +969,10 @@ func _end_drag() -> void:
 					_submit(action)
 					return
 
-	# 2. dropped on the translate strip -> pass the attack on
-	if _translate_strip.visible and translate_strip_rect.has_point(mouse):
+	# 2. dropped on the deflect strip -> pass the attack on
+	if _deflect_strip.visible and deflect_strip_rect.has_point(mouse):
 		for action in actions:
-			if action.type == "translate" and action.card == _drag.card:
+			if action.type == "deflect" and action.card == _drag.card:
 				_submit(action)
 				return
 
@@ -967,6 +1001,8 @@ func _process(_delta: float) -> void:
 		var dragged: Node2D = _drag.view
 		dragged.global_position = dragged.global_position.lerp(
 			mouse - _drag.grab_offset, drag_follow)
+		if dragged.has_method("set_hover_tilt"):
+			dragged.set_hover_tilt(0.0, 0.0) # flatten out as it lifts off the fan
 		dragged.z_index = 100
 
 	# a move is animating: the choreography owns every card, and _hand_slots may
@@ -975,7 +1011,7 @@ func _process(_delta: float) -> void:
 		return
 
 	# hover / raise only when the human can actually act; the fan still settles below
-	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack
+	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack and not _menu_open
 	_hovered_view = null
 	if interactive:
 		for i in range(_hand_slots.size() - 1, -1, -1):
@@ -996,15 +1032,28 @@ func _process(_delta: float) -> void:
 		# lift perpendicular to the fan so a tilted card rises straight off the arc
 		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
 		var goal: Vector2 = slot.home_pos + (lift if raised else Vector2.ZERO)
-		# hovered: lean toward the cursor (Balatro-style); otherwise rest on the fan arc
 		var target_angle: float = slot.home_angle
+		var tilt_x := 0.0
+		var tilt_y := 0.0
 		if raised:
-			var lean := clampf((mouse.x - view.global_position.x) / 110.0, -1.0, 1.0)
-			target_angle = deg_to_rad(hover_tilt) * lean
+			var lean_x := clampf((mouse.x - view.global_position.x) / 110.0, -1.0, 1.0)
+			var lean_y := clampf((mouse.y - view.global_position.y) / 150.0, -1.0, 1.0)
+			target_angle = deg_to_rad(hover_tilt) * lean_x # subtle flat in-plane lean, kept
+			# the real depth: a perspective tilt toward the cursor, warped in card_fx.gdshader
+			tilt_x = deg_to_rad(hover_3d) * -lean_y # cursor above centre -> top edge tips forward
+			tilt_y = deg_to_rad(hover_3d) * lean_x  # cursor right of centre -> right edge tips forward
+			# never dead still while raised: a slow drift + a hair of tilt sway,
+			# phase-offset per card so a fanned hand doesn't pulse in unison
+			var t := Time.get_ticks_msec() * 0.001
+			goal += Vector2(sin(t * 1.7 + idx), cos(t * 2.3 + idx)) * hover_float
+			tilt_x += sin(t * 1.3 + idx) * 0.03
+			tilt_y += cos(t * 1.1 + idx) * 0.03
 		view.global_position = view.global_position.lerp(goal, hand_follow)
 		view.scale = view.scale.lerp(
 			slot.home_scale * (hover_scale if raised else 1.0), hand_follow)
 		view.rotation = lerp_angle(view.rotation, target_angle, hand_follow)
+		if view.has_method("set_hover_tilt"):
+			view.set_hover_tilt(tilt_x, tilt_y, hand_follow)
 		view.z_index = 60 if raised else 10 + idx
 
 
@@ -1282,6 +1331,8 @@ func _new_back(pos: Vector2, z: int) -> Sprite2D:
 func _animate_to(view: Node2D, pos: Vector2, angle: float,
 		target_scale: Vector2, duration: float, delay: float) -> void:
 	_stop_tween(view)
+	if view.has_method("set_hover_tilt"):
+		view.set_hover_tilt(0.0, 0.0) # drop any hover 3D-tilt before the card flies
 	var tween := create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.tween_property(view, "position", pos, duration).set_delay(delay)
@@ -1380,7 +1431,7 @@ func _update_buttons() -> void:
 	_pass_button.visible = offered.call("pass") and not _move_pending
 	_take_button.visible = offered.call("take") \
 		and (game.phase == DurakGame.Phase.TAKING or _unbeaten_count() > 0)
-	_translate_strip.visible = offered.call("translate")
+	_deflect_strip.visible = offered.call("deflect")
 
 
 func _unbeaten_count() -> int:

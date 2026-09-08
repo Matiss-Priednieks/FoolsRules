@@ -30,8 +30,11 @@ shader = ExtResource("3_lbhrr")
 
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
+pixelate_enabled = false
 talon_pos = Vector2(250, 150)
 discard_pos = Vector2(1690, 800)
+table_drop_rect = Rect2(500, 350, 1200, 600)
+deflect_strip_rect = Rect2(600, 232, 600, 96)
 
 [node name="Pixelate" type="CanvasLayer" parent="." unique_id=1139313725]
 layer = 120
@@ -188,7 +191,7 @@ focus_mode = 0
 theme_override_font_sizes/font_size = 22
 text = "Pass"
 
-[node name="TranslateStrip" type="ColorRect" parent="UI/Root" unique_id=1656366528]
+[node name="DeflectStrip" type="ColorRect" parent="UI/Root" unique_id=1656366528]
 visible = false
 layout_mode = 0
 offset_left = 660.0
@@ -198,7 +201,7 @@ offset_bottom = 328.0
 mouse_filter = 2
 color = Color(0.9, 0.75, 0.2, 0.22)
 
-[node name="StripLabel" type="Label" parent="UI/Root/TranslateStrip" unique_id=1067842741]
+[node name="StripLabel" type="Label" parent="UI/Root/DeflectStrip" unique_id=1067842741]
 layout_mode = 0
 offset_right = 600.0
 offset_bottom = 96.0
@@ -206,6 +209,80 @@ theme_override_font_sizes/font_size = 20
 text = "▲  drop here — pass the attack on"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="PauseButton" type="Button" parent="UI/Root" unique_id=700000001]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -140.0
+offset_top = 18.0
+offset_right = -24.0
+offset_bottom = 54.0
+grow_horizontal = 0
+focus_mode = 0
+theme_override_font_sizes/font_size = 18
+text = "☰ Menu"
+
+[node name="PauseOverlay" type="Control" parent="UI/Root" unique_id=700000002]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Dim" type="ColorRect" parent="UI/Root/PauseOverlay" unique_id=700000003]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.35)
+
+[node name="Title" type="Label" parent="UI/Root/PauseOverlay" unique_id=700000004]
+layout_mode = 0
+offset_top = 340.0
+offset_right = 1920.0
+offset_bottom = 412.0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 48
+text = "Menu"
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000005]
+layout_mode = 0
+offset_left = 800.0
+offset_top = 460.0
+offset_right = 1120.0
+offset_bottom = 528.0
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "Back to Game"
+
+[node name="RestartButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000006]
+layout_mode = 0
+offset_left = 800.0
+offset_top = 546.0
+offset_right = 1120.0
+offset_bottom = 614.0
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "Restart"
+
+[node name="QuitButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000007]
+layout_mode = 0
+offset_left = 800.0
+offset_top = 632.0
+offset_right = 1120.0
+offset_bottom = 700.0
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "Main Menu"
 
 [node name="EndScreen" type="ColorRect" parent="UI/Root" unique_id=1994760652]
 visible = false
