@@ -1,6 +1,6 @@
 class_name Bot
 ## Dumb heuristic policy for the AI seats. Phase 4 will make this smarter.
-## For now bots never translate, and they would rather pass than throw a card in.
+## For now bots never deflect, and they would rather pass than throw a card in.
 
 ## Returns one legal action for whichever bot seat should move now, or {} when
 ## every remaining legal action belongs to a seat in `excluded_seats` (a human,
@@ -42,7 +42,7 @@ static func pick(game: DurakGame, excluded_seats: Array = []) -> Dictionary:
 		return takes[0]
 
 	for action in actions:
-		if action.type != "translate":
+		if action.type != "deflect":
 			return action
 	return actions[0]
 
