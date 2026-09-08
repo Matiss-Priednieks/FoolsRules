@@ -227,6 +227,12 @@ func _on_lobby_joined(this_lobby: int, _permissions: int, _locked: bool, respons
 	if response != 1:  # 1 == k_EChatRoomEnterResponseSuccess
 		lobby_error.emit("couldn't join lobby (%d)" % response)
 		return
+	# createLobby fires lobby_joined for the creator too - _on_lobby_created has
+	# already set our peer + member-data up. Re-running _start_peer() here fails
+	# to make a second listen socket and breaks the host's networking; re-writing
+	# member-data resets our seat. So: if we're already in this lobby, we made it.
+	if in_lobby and lobby_id == this_lobby:
+		return
 	lobby_id = this_lobby
 	in_lobby = true
 	is_host = int(_steam.getLobbyOwner(lobby_id)) == SteamManager.steam_id
