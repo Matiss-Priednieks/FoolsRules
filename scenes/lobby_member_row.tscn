@@ -11,25 +11,9 @@ custom_minimum_size = Vector2(190, 0)
 layout_mode = 2
 text = "Player"
 
-[node name="Seat1" type="Button" parent="."]
+[node name="SeatPick" type="OptionButton" parent="."]
+custom_minimum_size = Vector2(120, 0)
 layout_mode = 2
-toggle_mode = true
-text = "1"
-
-[node name="Seat2" type="Button" parent="."]
-layout_mode = 2
-toggle_mode = true
-text = "2"
-
-[node name="Seat3" type="Button" parent="."]
-layout_mode = 2
-toggle_mode = true
-text = "3"
-
-[node name="Seat4" type="Button" parent="."]
-layout_mode = 2
-toggle_mode = true
-text = "4"
 
 [node name="ReadyCheck" type="CheckButton" parent="."]
 layout_mode = 2

@@ -11,7 +11,8 @@ extends Node
 ## singleton fetched at runtime (never the bare `Steam` identifier) so this file
 ## still parses without the GodotSteam extension.
 
-const MAX_PLAYERS := 4
+const MAX_PLAYERS := DurakGame.MAX_PLAYERS  # 24
+const DEFAULT_PLAYERS := 4
 
 # Steam ELobbyType 2 == public. Lobbies are always Public so an invite code
 # (below) can resolve for someone who isn't a Steam friend.
@@ -24,7 +25,8 @@ const HOST_NAME := "host_name"
 const LOBBY_STATE := "state"     # "setup" or "starting"
 const SEATMAP := "seatmap"       # JSON { "<steam_id>": <seat> }, written on start
 const LISTED := "listed"         # "0" keeps a lobby out of the browser
-const SEAT := "seat"             # "-1" unset, else "0".."3"
+const PLAYERS := "players"       # seat count for this lobby's game (host-written)
+const SEAT := "seat"             # "-1" unset, else "0".. (num_players - 1)
 const READY := "ready"
 const PLAYER_NAME := "name"
 
@@ -34,7 +36,7 @@ signal lobby_error(msg: String)
 signal members_updated()
 signal browse_updated()
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }
-signal game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int)
+signal game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int, player_count: int)
 ## The RPC connection to the host died (or never truly formed) after the match
 ## already started - a client-only signal (MultiplayerAPI.server_disconnected
 ## never fires on the host). game.gd listens for this to bail out gracefully
@@ -47,10 +49,13 @@ var lobby_id: int = 0
 var members: Array[Dictionary] = []          # [{steam_id, name, seat, ready, is_host}]
 var browse_results: Array[Dictionary] = []   # [{lobby_id, host_name, count, max}]
 
+var player_count := DEFAULT_PLAYERS  # this lobby's seat count (host sets it, clients read it)
+
 var _steam: Object = null
 var _peer: MultiplayerPeer = null
 var _starting := false
 var _pending_listed := true
+var _pending_count := DEFAULT_PLAYERS
 
 
 func _ready() -> void:
@@ -79,14 +84,15 @@ func _ready() -> void:
 ## `listed` false = the lobby stays out of the in-game browser; it can then only
 ## be joined via its invite code (get_invite_code) or a Steam overlay invite.
 ## The lobby is Public either way so a code works for non-friends.
-func host(listed := true) -> void:
+func host(listed := true, seats := DEFAULT_PLAYERS) -> void:
 	if not _guard():
 		return
 	if in_lobby:
 		leave()
 	_starting = false
 	_pending_listed = listed
-	_steam.createLobby(_LOBBY_PUBLIC, MAX_PLAYERS)
+	_pending_count = clampi(seats, 2, MAX_PLAYERS)
+	_steam.createLobby(_LOBBY_PUBLIC, _pending_count)
 
 
 func join(target: int) -> void:
@@ -229,10 +235,12 @@ func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	lobby_id = new_lobby_id
 	in_lobby = true
 	is_host = true
+	player_count = _pending_count
 	_steam.setLobbyData(lobby_id, GAME_TAG, "durak")
 	_steam.setLobbyData(lobby_id, HOST_NAME, SteamManager.persona_name)
 	_steam.setLobbyData(lobby_id, LOBBY_STATE, "setup")
 	_steam.setLobbyData(lobby_id, LISTED, "1" if _pending_listed else "0")
+	_steam.setLobbyData(lobby_id, PLAYERS, str(player_count))
 	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
 	_steam.setLobbyMemberData(lobby_id, SEAT, "0")   # host takes seat 0
 	_steam.setLobbyMemberData(lobby_id, READY, "0")
@@ -255,6 +263,7 @@ func _on_lobby_joined(this_lobby: int, _permissions: int, _locked: bool, respons
 	lobby_id = this_lobby
 	in_lobby = true
 	is_host = int(_steam.getLobbyOwner(lobby_id)) == SteamManager.steam_id
+	_read_player_count()
 	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
 	_steam.setLobbyMemberData(lobby_id, SEAT, "-1")
 	_steam.setLobbyMemberData(lobby_id, READY, "0")
@@ -294,6 +303,8 @@ func _on_lobby_chat_update(updated_lobby: int, _changed_id: int, _by_id: int, _s
 func _on_lobby_data_update(_success: int, updated_lobby: int, _member_id: int) -> void:
 	if updated_lobby != lobby_id:
 		return
+	if not is_host:
+		_read_player_count()
 	_rebuild_members()
 	members_updated.emit()
 	if str(_steam.getLobbyData(lobby_id, LOBBY_STATE)) == "starting":
@@ -311,6 +322,14 @@ func _guard() -> bool:
 		lobby_error.emit("Steam not available")
 		return false
 	return true
+
+
+## Clients read the host-written seat count out of lobby-data. Falls back to the
+## current value if the key isn't set yet (an older host, or a race on join).
+func _read_player_count() -> void:
+	var raw := str(_steam.getLobbyData(lobby_id, PLAYERS))
+	if raw != "":
+		player_count = clampi(int(raw), 2, MAX_PLAYERS)
 
 
 func _start_peer(as_host: bool) -> void:
@@ -413,13 +432,13 @@ func _resolve_seats() -> Dictionary:
 	var ordered := members.duplicate()
 	ordered.sort_custom(func(a, b): return a.is_host and not b.is_host)
 	for m in ordered:
-		if m.seat >= 0 and m.seat < MAX_PLAYERS and not used.has(m.seat):
+		if m.seat >= 0 and m.seat < player_count and not used.has(m.seat):
 			seat_map[m.steam_id] = m.seat
 			used[m.seat] = true
 	for m in ordered:
 		if seat_map.has(m.steam_id):
 			continue
-		for s in MAX_PLAYERS:
+		for s in player_count:
 			if not used.has(s):
 				seat_map[m.steam_id] = s
 				used[s] = true
@@ -443,4 +462,4 @@ func _maybe_start() -> void:
 		seat_map[int(key)] = int(parsed.seats[key])
 	for m in members:
 		names[m.steam_id] = m.name
-	game_starting.emit(seat_map, names, int(parsed.get("seed", 0)))
+	game_starting.emit(seat_map, names, int(parsed.get("seed", 0)), player_count)

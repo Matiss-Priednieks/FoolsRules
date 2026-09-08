@@ -7,36 +7,46 @@ extends Node
 ## networking layer.
 
 var active := false                  ## true = launched from a multiplayer lobby
+var num_players := 4                  ## seat count for this game (2..DurakGame.MAX_PLAYERS)
 var local_seat := 0                  ## which DurakGame seat this client controls
-var seat_is_bot: Array[bool] = [false, false, false, false]  ## per-seat: bot fills it
-var player_names: Array[String] = ["", "", "", ""]           ## display name per seat ("" = bot)
-var seat_steam_id: Array[int] = [0, 0, 0, 0]                 ## per-seat Steam ID, 0 = bot
-var seat_peer_id: Array[int] = [0, 0, 0, 0]                  ## per-seat Godot multiplayer peer id (LAN test), 0 = bot
+var seat_is_bot: Array[bool] = []    ## per-seat: a bot fills it
+var player_names: Array[String] = [] ## display name per seat ("" = bot)
+var seat_steam_id: Array[int] = []   ## per-seat Steam ID, 0 = bot
+var seat_peer_id: Array[int] = []    ## per-seat Godot multiplayer peer id (LAN test), 0 = bot
 var seed := 0                        ## shared DurakGame seed so every peer deals identically
-var pending_message := ""            ## one-shot notice for the menu to show after an unexpected return (e.g. "Lost connection to the host.")
+var pending_message := ""            ## one-shot notice for the menu to show after an unexpected return
+
+
+func _reset(players: int) -> void:
+	num_players = clampi(players, 2, DurakGame.MAX_PLAYERS)
+	seat_is_bot = []
+	player_names = []
+	seat_steam_id = []
+	seat_peer_id = []
+	for _s in num_players:
+		seat_is_bot.append(true)
+		player_names.append("")
+		seat_steam_id.append(0)
+		seat_peer_id.append(0)
 
 
 func configure_singleplayer() -> void:
 	active = false
-	local_seat = 0
-	seat_is_bot = [false, true, true, true]
-	player_names = ["You", "", "", ""]
-	seat_steam_id = [0, 0, 0, 0]
-	seat_peer_id = [0, 0, 0, 0]
 	seed = 0
+	_reset(4)
+	local_seat = 0
+	seat_is_bot[0] = false
+	player_names[0] = "You"
 
 
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }.
-func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id: int, game_seed: int) -> void:
+func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id: int, game_seed: int, players: int) -> void:
 	active = true
 	seed = game_seed
-	seat_is_bot = [true, true, true, true]
-	player_names = ["", "", "", ""]
-	seat_steam_id = [0, 0, 0, 0]
-	seat_peer_id = [0, 0, 0, 0]
+	_reset(players)
 	for steam_id in seat_map:
 		var seat: int = seat_map[steam_id]
-		if seat < 0 or seat > 3:
+		if seat < 0 or seat >= num_players:
 			continue
 		seat_is_bot[seat] = false
 		seat_steam_id[seat] = steam_id
@@ -50,8 +60,10 @@ func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id:
 func configure_lan_test(seat: int) -> void:
 	active = true
 	seed = 918273645 # fixed - both sides just need to match, not be unpredictable
+	_reset(4)
 	local_seat = seat
-	seat_is_bot = [false, false, true, true]
-	player_names = ["Host", "Guest", "", ""]
-	seat_steam_id = [0, 0, 0, 0]
-	seat_peer_id = [1, 0, 0, 0] # ENet server is always peer id 1; index 1 fills in once the guest connects
+	seat_is_bot[0] = false
+	seat_is_bot[1] = false
+	player_names[0] = "Host"
+	player_names[1] = "Guest"
+	seat_peer_id[0] = 1 # ENet server is always peer id 1; index 1 fills in once the guest connects

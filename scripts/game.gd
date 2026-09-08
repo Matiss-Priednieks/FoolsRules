@@ -88,6 +88,7 @@ var game: DurakGame
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
 @onready var _seat_labels: Array[Label] = [
 	$UI/Root/SeatLabel0, $UI/Root/SeatLabel1, $UI/Root/SeatLabel2, $UI/Root/SeatLabel3]
+	## 4 in the scene; _ensure_seat_labels() grows the list for bigger tables.
 @onready var _hand_sort_button: Button = $UI/Root/HandSortButton
 @onready var _confirm_button: Button = $UI/Root/ConfirmButton
 @onready var _take_button: Button = $UI/Root/TakeButton
@@ -225,7 +226,9 @@ func _new_game() -> void:
 	# In multiplayer every peer must deal identically without transmitting the
 	# deal itself, so they all build the same DurakGame from the same seed.
 	var game_seed := NetSession.seed if NetSession.active else 0
-	game = DurakGame.new(4, game_seed)
+	var players := NetSession.num_players if NetSession.active else 4
+	game = DurakGame.new(players, game_seed)
+	_ensure_seat_labels(game.num_players)
 	game.game_over.connect(_on_game_over)
 	_deal_out() # animate the deal, then settle + hand off to the bots
 
@@ -278,7 +281,7 @@ func _deal_out() -> void:
 				# turns to face its seat mid-flight
 				_animate_to(back, _opponent_slot_pos(seat, i, hand.size()),
 					_seat_layout(seat).facing,
-					_fit_scale(back, opponent_card_height), deal_fly, 0.0)
+					_fit_scale(back, opponent_card_height * _opp_scale()), deal_fly, 0.0)
 			_play_deal()
 			await _wait(deal_gap)
 		await _wait(deal_player_beat)
@@ -909,7 +912,7 @@ func _grow_opponent_backs(seat: int) -> void:
 		backs.append(_new_back(talon_pos, 4))
 	for i in backs.size():
 		_animate_to(backs[i], _opponent_slot_pos(seat, i, wanted), facing,
-			_fit_scale(backs[i], opponent_card_height), refill_anim, 0.0)
+			_fit_scale(backs[i], opponent_card_height * _opp_scale()), refill_anim, 0.0)
 
 
 func _fit_scale(view: Sprite2D, target_height: float) -> Vector2:
@@ -1157,14 +1160,39 @@ func _near_seat() -> int:
 
 func _seat_layout(seat: int) -> Dictionary:
 	# origin: where this seat's cards sit. vertical: the back row runs down, not
-	# across. facing: the angle the seat's cards rest at - the side seats hold
-	# theirs sideways, turned to look towards that player.
+	# across. facing: the rest angle - side seats hold theirs sideways, turned to
+	# face that player. Self is fixed bottom-centre; the opponents ride an arc
+	# swept over the top, spread evenly however many there are.
 	var relative := (seat - _near_seat() + game.num_players) % game.num_players
-	match relative:
-		0: return {origin = Vector2(960, 965), vertical = false, facing = 0.0, label_offset = Vector2(-45, -150)}
-		1: return {origin = Vector2(150, 540), vertical = true, facing = - PI / 2.0, label_offset = Vector2(-40, -170)}
-		2: return {origin = Vector2(960, 120), vertical = false, facing = 0.0, label_offset = Vector2(-45, 90)}
-		_: return {origin = Vector2(1770, 540), vertical = true, facing = PI / 2.0, label_offset = Vector2(-40, -170)}
+	if relative == 0:
+		return {origin = Vector2(960, 965), vertical = false, facing = 0.0, label_offset = Vector2(-45, -150)}
+	var others := game.num_players - 1
+	var t := 0.5 if others <= 1 else float(relative - 1) / float(others - 1)
+	var theta := lerpf(-PI * 0.06, -PI * 0.94, t) # left edge -> over the top -> right edge
+	var origin := Vector2(960.0 + cos(theta) * 780.0, 486.0 + sin(theta) * 360.0)
+	var vertical := absf(cos(theta)) > 0.5
+	return {
+		origin = origin,
+		vertical = vertical,
+		facing = cos(theta) * (PI / 2.0),
+		label_offset = Vector2(-40, -150) if vertical else Vector2(-45, 78),
+	}
+
+
+## Opponent fans get tighter as the table fills, so N of them still fit the arc.
+func _opp_scale() -> float:
+	return clampf(4.0 / maxf(game.num_players - 1, 1), 0.34, 1.0)
+
+
+## The scene ships 4 seat labels; a bigger table needs more. Clone the styling
+## of SeatLabel0 for any extra.
+func _ensure_seat_labels(count: int) -> void:
+	while _seat_labels.size() < count:
+		var l := Label.new()
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		l.add_theme_font_size_override("font_size", 18)
+		_ui_root.add_child(l)
+		_seat_labels.append(l)
 
 
 # The human hand is a fan: cards ride a circle of radius `hand_fan_radius`
@@ -1205,7 +1233,7 @@ func _display_hand(seat: int) -> Array:
 
 func _opponent_slot_pos(seat: int, index: int, hand_size: int) -> Vector2:
 	var layout := _seat_layout(seat)
-	var spacing := 26.0
+	var spacing := 26.0 * _opp_scale()
 	var span := spacing * maxf(hand_size - 1, 0)
 	var offset := -span * 0.5 + index * spacing
 	return layout.origin + (Vector2(0, offset) if layout.vertical else Vector2(offset, 0))

@@ -38,6 +38,8 @@ const LobbyMemberRow := preload("res://scenes/lobby_member_row.tscn")
 var _screen := Screen.MAIN
 var _toast_until := 0.0
 var _current_invite_code := ""
+var _host_seats := 4                  ## seat count the host will create the lobby with
+var _seat_value_label: Label = null
 
 
 ## No-Steam local test transport: run one instance with `-- --lan-host` and a
@@ -67,7 +69,8 @@ func _ready() -> void:
 		_multiplayer_button.disabled = true
 		_multiplayer_button.text = "Multiplayer  (Steam not running)"
 
-	_host_button.pressed.connect(func(): SteamLobby.host(_list_publicly_check.button_pressed))
+	_build_seat_stepper()
+	_host_button.pressed.connect(func(): SteamLobby.host(_list_publicly_check.button_pressed, _host_seats))
 	_join_by_code_button.pressed.connect(func(): SteamLobby.join_by_code(_code_field.text))
 	_refresh_button.pressed.connect(SteamLobby.refresh_browse)
 	_back_button.pressed.connect(_goto.bind(Screen.MAIN))
@@ -115,6 +118,51 @@ func _open_browse() -> void:
 	SteamLobby.refresh_browse()
 
 
+# --- host seat count ------------------------------------------------
+
+## A small "- N +" stepper built in code and slotted above Host Game, so the
+## host picks the table size (2..DurakGame.MAX_PLAYERS) before creating a lobby.
+## Kept procedural to leave menu.tscn (theme WIP) untouched.
+func _build_seat_stepper() -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var caption := Label.new()
+	caption.text = "Players:"
+	row.add_child(caption)
+
+	var minus := Button.new()
+	minus.text = "  −  "
+	minus.pressed.connect(func(): _nudge_seats(-1))
+	row.add_child(minus)
+
+	_seat_value_label = Label.new()
+	_seat_value_label.custom_minimum_size = Vector2(40, 0)
+	_seat_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	row.add_child(_seat_value_label)
+
+	var plus := Button.new()
+	plus.text = "  +  "
+	plus.pressed.connect(func(): _nudge_seats(1))
+	row.add_child(plus)
+
+	var box := _host_button.get_parent()
+	box.add_child(row)
+	box.move_child(row, _host_button.get_index())
+	_update_seat_label()
+
+
+func _nudge_seats(delta: int) -> void:
+	_host_seats = clampi(_host_seats + delta, 2, SteamLobby.MAX_PLAYERS)
+	_update_seat_label()
+
+
+func _update_seat_label() -> void:
+	if _seat_value_label != null:
+		_seat_value_label.text = str(_host_seats)
+
+
 # --- dynamic content ---------------------------------------------------
 
 func _refresh_browse() -> void:
@@ -148,7 +196,7 @@ func _refresh_room() -> void:
 		var m: Dictionary = member
 		var row := LobbyMemberRow.instantiate()
 		_members_box.add_child(row)
-		row.setup(m, m.steam_id == SteamManager.steam_id, taken)
+		row.setup(m, m.steam_id == SteamManager.steam_id, taken, SteamLobby.player_count)
 		row.seat_picked.connect(SteamLobby.set_my_seat)
 		row.ready_toggled.connect(SteamLobby.set_my_ready)
 
@@ -193,8 +241,8 @@ func _on_lobby_exited() -> void:
 		_goto(Screen.BROWSE)
 
 
-func _on_game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int) -> void:
-	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id, game_seed)
+func _on_game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int, player_count: int) -> void:
+	NetSession.configure_multiplayer(seat_map, names, SteamManager.steam_id, game_seed, player_count)
 	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 
