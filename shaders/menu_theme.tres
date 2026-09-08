@@ -1,5 +1,7 @@
 [gd_resource type="Theme" format=3 uid="uid://dj7dpxx7e6w8w"]
 
+[ext_resource type="FontFile" uid="uid://ktehcoeqxyot" path="res://fonts/dm-serif.ttf" id="1_16cxv"]
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_iywne"]
 bg_color = Color(0, 0.45, 0.007499993, 1)
 corner_radius_top_left = 30
@@ -9,4 +11,5 @@ corner_radius_bottom_left = 30
 corner_detail = 1
 
 [resource]
+default_font = ExtResource("1_16cxv")
 Button/styles/normal = SubResource("StyleBoxFlat_iywne")

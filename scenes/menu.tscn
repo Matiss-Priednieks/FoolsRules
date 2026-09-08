@@ -2,162 +2,22 @@
 
 [ext_resource type="FontFile" uid="uid://ktehcoeqxyot" path="res://fonts/dm-serif.ttf" id="1_con2f"]
 [ext_resource type="Script" uid="uid://b0eqjsoqu2s8w" path="res://scripts/menu.gd" id="1_menu"]
-[ext_resource type="Gradient" uid="uid://bdc3bgqew7wrg" path="res://shaders/green_gradient.tres" id="3_con2f"]
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vjb58"]
-bg_color = Color(0.17249994, 0, 0.45, 1)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-corner_detail = 1
+[ext_resource type="StyleBox" uid="uid://bksa5bcylhg45" path="res://shaders/theme_resources/button_box_hover.tres" id="2_4ytvr"]
+[ext_resource type="StyleBox" uid="uid://gdaq5n7et4s5" path="res://shaders/theme_resources/button_box.tres" id="2_mhnvy"]
+[ext_resource type="Shader" uid="uid://cah1qm0tx6qep" path="res://scenes/menu.tres" id="2_vjb58"]
+[ext_resource type="StyleBox" uid="uid://cm5e5jnexfa1q" path="res://shaders/theme_resources/button_box_pressed.tres" id="4_g3eks"]
 
 [sub_resource type="Theme" id="Theme_con2f"]
 Button/font_sizes/font_size = 25
 Button/fonts/font = ExtResource("1_con2f")
-Button/styles/normal = SubResource("StyleBoxFlat_vjb58")
+Button/styles/hover = ExtResource("2_4ytvr")
+Button/styles/normal = ExtResource("2_mhnvy")
+Button/styles/pressed = ExtResource("4_g3eks")
 Label/font_sizes/font_size = 50
 Label/fonts/font = ExtResource("1_con2f")
 
-[sub_resource type="VisualShaderNodeVectorDecompose" id="VisualShaderNodeVectorDecompose_vjb58"]
-default_input_values = [0, Vector2(0, 0)]
-op_type = 0
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_con2f"]
-output_port_for_preview = 0
-operator = 1
-
-[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_mhnvy"]
-input_name = "time"
-
-[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_4ytvr"]
-input_name = "uv"
-
-[sub_resource type="VisualShaderNodeFloatConstant" id="VisualShaderNodeFloatConstant_g3eks"]
-constant = 2.0
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_v86rl"]
-output_port_for_preview = 0
-operator = 2
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_13sgg"]
-output_port_for_preview = 0
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_i6lef"]
-output_port_for_preview = 0
-default_input_values = [0, 0.0, 1, 0.09]
-operator = 2
-
-[sub_resource type="FastNoiseLite" id="FastNoiseLite_32sm0"]
-noise_type = 3
-frequency = 0.0039
-fractal_lacunarity = 1.31
-
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_qughs"]
-noise = SubResource("FastNoiseLite_32sm0")
-
-[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_70i5f"]
-texture = SubResource("NoiseTexture2D_qughs")
-
-[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_mj5lg"]
-default_input_values = [0, Vector2(0, 0), 1, Vector2(48, 27)]
-op_type = 0
-operator = 2
-
-[sub_resource type="VisualShaderNodeVectorFunc" id="VisualShaderNodeVectorFunc_ufwb2"]
-default_input_values = [0, Vector2(0, 0)]
-op_type = 0
-function = 17
-
-[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_6cdou"]
-default_input_values = [0, Vector2(0, 0), 1, Vector2(0.5, 0.5)]
-op_type = 0
-
-[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_i42df"]
-default_input_values = [0, Vector2(0, 0), 1, Vector2(48, 27)]
-op_type = 0
-operator = 3
-
-[sub_resource type="VisualShaderNodeFloatFunc" id="VisualShaderNodeFloatFunc_7jp70"]
-function = 0
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_mxgkd"]
-output_port_for_preview = 0
-
-[sub_resource type="VisualShaderNodeFloatFunc" id="VisualShaderNodeFloatFunc_g6gyw"]
-output_port_for_preview = 0
-function = 17
-
-[sub_resource type="GradientTexture1D" id="GradientTexture1D_8h11u"]
-gradient = ExtResource("3_con2f")
-
-[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_3dmrc"]
-output_port_for_preview = 0
-texture = SubResource("GradientTexture1D_8h11u")
-texture_type = 1
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_81l6r"]
-output_port_for_preview = 0
-default_input_values = [0, 0.0, 1, 0.5]
-
-[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_rsfmq"]
-output_port_for_preview = 0
-default_input_values = [0, 0.0, 1, 1.0]
-operator = 2
-
-[sub_resource type="VisualShaderNodeVectorDecompose" id="VisualShaderNodeVectorDecompose_oi1it"]
-default_input_values = [0, Vector2(0, 0)]
-op_type = 0
-
-[sub_resource type="VisualShader" id="VisualShader_fy8yy"]
-mode = 1
-flags/light_only = false
-nodes/vertex/0/position = Vector2(2053.3333, -40)
-nodes/fragment/0/position = Vector2(2253.3333, 840)
-nodes/fragment/2/node = SubResource("VisualShaderNodeFloatOp_i6lef")
-nodes/fragment/2/position = Vector2(1080, 720)
-nodes/fragment/3/node = SubResource("VisualShaderNodeFloatFunc_7jp70")
-nodes/fragment/3/position = Vector2(693.3333, 773.3333)
-nodes/fragment/4/node = SubResource("VisualShaderNodeFloatOp_mxgkd")
-nodes/fragment/4/position = Vector2(1520, 813.3333)
-nodes/fragment/5/node = SubResource("VisualShaderNodeFloatFunc_g6gyw")
-nodes/fragment/5/position = Vector2(1746.6666, 840)
-nodes/fragment/6/node = SubResource("VisualShaderNodeTexture_3dmrc")
-nodes/fragment/6/position = Vector2(1986.6666, 733.3333)
-nodes/fragment/7/node = SubResource("VisualShaderNodeFloatOp_81l6r")
-nodes/fragment/7/position = Vector2(1293.3334, 986.6667)
-nodes/fragment/8/node = SubResource("VisualShaderNodeFloatOp_rsfmq")
-nodes/fragment/8/position = Vector2(493.33334, 840)
-nodes/fragment/9/node = SubResource("VisualShaderNodeVectorDecompose_oi1it")
-nodes/fragment/9/position = Vector2(-40, 1226.6666)
-nodes/fragment/11/node = SubResource("VisualShaderNodeVectorDecompose_vjb58")
-nodes/fragment/11/position = Vector2(-13.333333, 733.3333)
-nodes/fragment/12/node = SubResource("VisualShaderNodeFloatOp_con2f")
-nodes/fragment/12/position = Vector2(1066.6666, 1213.3334)
-nodes/fragment/13/node = SubResource("VisualShaderNodeInput_mhnvy")
-nodes/fragment/13/position = Vector2(666.6667, 626.6667)
-nodes/fragment/14/node = SubResource("VisualShaderNodeInput_4ytvr")
-nodes/fragment/14/position = Vector2(-1240, 933.3333)
-nodes/fragment/15/node = SubResource("VisualShaderNodeFloatConstant_g3eks")
-nodes/fragment/15/position = Vector2(666.6667, 1213.3334)
-nodes/fragment/16/node = SubResource("VisualShaderNodeFloatOp_v86rl")
-nodes/fragment/16/position = Vector2(866.6667, 906.6667)
-nodes/fragment/19/node = SubResource("VisualShaderNodeFloatOp_13sgg")
-nodes/fragment/19/position = Vector2(226.66667, 653.3333)
-nodes/fragment/20/node = SubResource("VisualShaderNodeTexture_70i5f")
-nodes/fragment/20/position = Vector2(200, 1000)
-nodes/fragment/21/node = SubResource("VisualShaderNodeVectorOp_mj5lg")
-nodes/fragment/21/position = Vector2(-840, 1280)
-nodes/fragment/22/node = SubResource("VisualShaderNodeVectorFunc_ufwb2")
-nodes/fragment/22/position = Vector2(-640, 920)
-nodes/fragment/23/node = SubResource("VisualShaderNodeVectorOp_6cdou")
-nodes/fragment/23/position = Vector2(-466.66666, 1266.6666)
-nodes/fragment/24/node = SubResource("VisualShaderNodeVectorOp_i42df")
-nodes/fragment/24/position = Vector2(-266.66666, 906.6667)
-nodes/fragment/connections = PackedInt32Array(2, 0, 4, 0, 4, 0, 5, 0, 5, 0, 6, 0, 9, 1, 12, 1, 7, 0, 4, 1, 6, 0, 0, 0, 13, 0, 2, 0, 12, 0, 7, 1, 8, 0, 3, 0, 3, 0, 16, 0, 15, 0, 16, 1, 11, 0, 19, 0, 9, 1, 19, 1, 16, 0, 12, 0, 2, 0, 7, 0, 19, 0, 8, 0, 20, 0, 8, 1, 14, 0, 21, 0, 21, 0, 22, 0, 22, 0, 23, 0, 23, 0, 24, 0, 24, 0, 11, 0, 24, 0, 9, 0)
-
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_6wigr"]
-shader = SubResource("VisualShader_fy8yy")
+shader = ExtResource("2_vjb58")
 
 [node name="Menu" type="Control" unique_id=1458814360]
 layout_mode = 3
@@ -210,7 +70,7 @@ theme_override_constants/separation = 14
 [node name="MainTitle" type="Label" parent="MainPanel/MainBox" unique_id=1123188216]
 layout_mode = 2
 theme_override_font_sizes/font_size = 40
-text = "DURAK"
+text = "Fool's Rules"
 horizontal_alignment = 1
 
 [node name="SingleplayerButton" type="Button" parent="MainPanel/MainBox" unique_id=1722632212]

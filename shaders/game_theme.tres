@@ -1,12 +1,12 @@
 [gd_resource type="Theme" format=3 uid="uid://c6o6v8cxcgdms"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_iywne"]
-bg_color = Color(0.15749995, 0.45, 0, 1)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-corner_detail = 1
+[ext_resource type="StyleBox" uid="uid://gdaq5n7et4s5" path="res://shaders/theme_resources/button_box.tres" id="1_2qskw"]
+[ext_resource type="StyleBox" uid="uid://bksa5bcylhg45" path="res://shaders/theme_resources/button_box_hover.tres" id="1_rht4m"]
+[ext_resource type="StyleBox" uid="uid://cm5e5jnexfa1q" path="res://shaders/theme_resources/button_box_pressed.tres" id="3_insp7"]
+[ext_resource type="FontFile" uid="uid://ktehcoeqxyot" path="res://fonts/dm-serif.ttf" id="4_insp7"]
 
 [resource]
-Button/styles/normal = SubResource("StyleBoxFlat_iywne")
+default_font = ExtResource("4_insp7")
+Button/styles/hover = ExtResource("1_rht4m")
+Button/styles/normal = ExtResource("1_2qskw")
+Button/styles/pressed = ExtResource("3_insp7")
