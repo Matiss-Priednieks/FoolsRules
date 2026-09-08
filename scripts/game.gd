@@ -458,14 +458,21 @@ func _perform(action: Dictionary) -> void:
 		await _apply_and_animate(action)
 		if NetSession.active and multiplayer.has_multiplayer_peer():
 			_broadcast_applied(action)
-	elif not multiplayer.has_multiplayer_peer():
-		# the connection to the host is gone - stop trying to talk to it
+	elif not _host_reachable():
+		# no live channel to the host - don't throw "peer not connected", bail
 		_awaiting_ack = false
 		_on_disconnected_unexpectedly("Lost connection to the host.")
 	else:
 		_awaiting_ack = true
 		net_request_action.rpc_id(1, _action_to_wire(action))
 		_await_ack(action)
+
+
+func _host_reachable() -> bool:
+	var p := multiplayer.multiplayer_peer
+	return p != null and not (p is OfflineMultiplayerPeer) \
+		and p.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED \
+		and 1 in multiplayer.get_peers()
 
 
 ## Defensive-only: a well-behaved host always answers. If it doesn't (a lost

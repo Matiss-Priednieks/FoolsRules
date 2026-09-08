@@ -156,12 +156,19 @@ func _refresh_room() -> void:
 	_invite_code_row.visible = _current_invite_code != ""
 	_invite_code_label.text = "Invite code:  %s" % _current_invite_code
 
+	var connected := SteamLobby.all_peers_connected()
+	var others := maxi(SteamLobby.members.size() - 1, 0)
 	_start_button.visible = SteamLobby.is_host
-	_start_button.disabled = not _all_set()
+	_start_button.disabled = not _all_set() or not connected
 	if SteamLobby.is_host:
-		_hint_label.text = "" if _all_set() else "Everyone needs a distinct seat and Ready before start."
+		if not _all_set():
+			_hint_label.text = "Everyone needs a distinct seat and Ready before start."
+		elif not connected:
+			_hint_label.text = "Connecting to players… (%d/%d)" % [SteamLobby.get_connected_peer_count(), others]
+		else:
+			_hint_label.text = ""
 	else:
-		_hint_label.text = "Waiting for the host to start…"
+		_hint_label.text = "Connecting…" if not connected else "Waiting for the host to start…"
 
 
 func _all_set() -> bool:

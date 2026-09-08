@@ -122,12 +122,13 @@ func _teardown_peer() -> void:
 	]:
 		if multiplayer.is_connected(pair[0], pair[1]):
 			multiplayer.disconnect(pair[0], pair[1])
-	if _peer != null:
-		if _peer.has_method("close"):
-			_peer.close()
-		_peer = null
+	# Detaching the peer from the MultiplayerAPI drops the last strong ref (it's
+	# RefCounted) and lets its destructor close the Steam socket. Calling
+	# _peer.close() explicitly here crashed GodotSteam v4.22 on the second host,
+	# so don't - just release it and give Steam a beat (see _start_peer).
 	if multiplayer.has_multiplayer_peer():
 		multiplayer.multiplayer_peer = null
+	_peer = null
 
 
 func refresh_browse() -> void:
@@ -315,7 +316,14 @@ func _guard() -> bool:
 func _start_peer(as_host: bool) -> void:
 	if not ClassDB.class_exists("SteamMultiplayerPeer"):
 		return
+	var had_socket := _peer != null or multiplayer.has_multiplayer_peer()
 	_teardown_peer()  # release any socket left open by a previous lobby
+	if had_socket:
+		# close() isn't reliably synchronous - let Steam pump a few callbacks
+		# before we ask for a fresh listen socket, or it comes back err-20.
+		await get_tree().create_timer(0.35).timeout
+		if not in_lobby:
+			return
 	_peer = ClassDB.instantiate("SteamMultiplayerPeer")
 	# Direct P2P between two real machines routinely fails to punch through NAT/
 	# firewalls even though the peer object itself is created successfully -
@@ -331,9 +339,7 @@ func _start_peer(as_host: bool) -> void:
 		err = _peer.connect_to_lobby(lobby_id) if _peer.has_method("connect_to_lobby") else _peer.create_client(int(_steam.getLobbyOwner(lobby_id)), 0)
 	if err != OK:
 		push_warning("[Lobby] SteamMultiplayerPeer setup failed (%s)." % err)
-		lobby_error.emit("Couldn't open the game connection (error %s). Leave and try again." % err)
-		if _peer.has_method("close"):
-			_peer.close()
+		lobby_error.emit("Couldn't open the connection (error %s). If this keeps happening, restart the game." % err)
 		_peer = null
 		return
 	multiplayer.multiplayer_peer = _peer
@@ -344,9 +350,29 @@ func _start_peer(as_host: bool) -> void:
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 
-func _on_peer_connected(id: int) -> void: print("[Lobby] peer_connected: %d" % id)
-func _on_peer_disconnected(id: int) -> void: print("[Lobby] peer_disconnected: %d" % id)
-func _on_connection_failed() -> void: print("[Lobby] connection_failed")
+func _on_peer_connected(id: int) -> void:
+	print("[Lobby] peer_connected: %d" % id)
+	members_updated.emit() # room UI re-checks all_peers_connected() for the Start button
+
+func _on_peer_disconnected(id: int) -> void:
+	print("[Lobby] peer_disconnected: %d" % id)
+	members_updated.emit()
+
+func _on_connection_failed() -> void:
+	print("[Lobby] connection_failed")
+	lobby_error.emit("Couldn't reach the host. Leave and rejoin.")
+
+
+func get_connected_peer_count() -> int:
+	return multiplayer.get_peers().size() if multiplayer.has_multiplayer_peer() else 0
+
+
+## Every other lobby member is a live RPC peer. The host must not be allowed to
+## Start until this is true, or clients load the board on a dead channel.
+func all_peers_connected() -> bool:
+	if not in_lobby or _peer == null:
+		return false
+	return get_connected_peer_count() >= maxi(members.size() - 1, 0)
 
 
 func _on_server_disconnected() -> void:
