@@ -101,15 +101,33 @@ func join(target: int) -> void:
 func leave() -> void:
 	if in_lobby and _steam != null:
 		_steam.leaveLobby(lobby_id)
-	if multiplayer.multiplayer_peer == _peer:
-		multiplayer.multiplayer_peer = null
-	_peer = null
+	_teardown_peer()
 	in_lobby = false
 	is_host = false
 	lobby_id = 0
 	_starting = false
 	members.clear()
 	lobby_exited.emit()
+
+
+## Fully release the multiplayer peer: close its Steam listen socket (else the
+## next host/join in this process fails with "socket already in use", err 20)
+## and drop the signal handlers so they don't stack across lobby cycles.
+func _teardown_peer() -> void:
+	for pair in [
+		[&"peer_connected", _on_peer_connected],
+		[&"peer_disconnected", _on_peer_disconnected],
+		[&"connection_failed", _on_connection_failed],
+		[&"server_disconnected", _on_server_disconnected],
+	]:
+		if multiplayer.is_connected(pair[0], pair[1]):
+			multiplayer.disconnect(pair[0], pair[1])
+	if _peer != null:
+		if _peer.has_method("close"):
+			_peer.close()
+		_peer = null
+	if multiplayer.has_multiplayer_peer():
+		multiplayer.multiplayer_peer = null
 
 
 func refresh_browse() -> void:
@@ -297,6 +315,7 @@ func _guard() -> bool:
 func _start_peer(as_host: bool) -> void:
 	if not ClassDB.class_exists("SteamMultiplayerPeer"):
 		return
+	_teardown_peer()  # release any socket left open by a previous lobby
 	_peer = ClassDB.instantiate("SteamMultiplayerPeer")
 	# Direct P2P between two real machines routinely fails to punch through NAT/
 	# firewalls even though the peer object itself is created successfully -
@@ -311,15 +330,23 @@ func _start_peer(as_host: bool) -> void:
 	else:
 		err = _peer.connect_to_lobby(lobby_id) if _peer.has_method("connect_to_lobby") else _peer.create_client(int(_steam.getLobbyOwner(lobby_id)), 0)
 	if err != OK:
-		push_warning("[Lobby] SteamMultiplayerPeer setup failed (%s); lobby-data channel still works." % err)
+		push_warning("[Lobby] SteamMultiplayerPeer setup failed (%s)." % err)
+		lobby_error.emit("Couldn't open the game connection (error %s). Leave and try again." % err)
+		if _peer.has_method("close"):
+			_peer.close()
 		_peer = null
 		return
 	multiplayer.multiplayer_peer = _peer
 	print("[Lobby] peer started (%s), status=%d" % ["host" if as_host else "client", _peer.get_connection_status()])
-	multiplayer.peer_connected.connect(func(id): print("[Lobby] peer_connected: %d" % id))
-	multiplayer.peer_disconnected.connect(func(id): print("[Lobby] peer_disconnected: %d" % id))
-	multiplayer.connection_failed.connect(func(): print("[Lobby] connection_failed"))
+	multiplayer.peer_connected.connect(_on_peer_connected)
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+
+func _on_peer_connected(id: int) -> void: print("[Lobby] peer_connected: %d" % id)
+func _on_peer_disconnected(id: int) -> void: print("[Lobby] peer_disconnected: %d" % id)
+func _on_connection_failed() -> void: print("[Lobby] connection_failed")
 
 
 func _on_server_disconnected() -> void:

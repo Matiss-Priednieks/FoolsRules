@@ -144,11 +144,17 @@ func _ready() -> void:
 		human_seat = -1 # plain headless run: the self-play smoke test
 	elif NetSession.active:
 		human_seat = NetSession.local_seat # launched from a multiplayer lobby or LAN test
-		print("[net] multiplayer game: seat=%d authority=%s peer=%s unique_id=%d status=%d" % [
-			human_seat, _is_authority(), multiplayer.multiplayer_peer,
-			multiplayer.get_unique_id(),
-			multiplayer.multiplayer_peer.get_connection_status() if multiplayer.multiplayer_peer else -1])
+		var live := multiplayer.has_multiplayer_peer()
+		print("[net] multiplayer game: seat=%d authority=%s live_peer=%s unique_id=%d status=%d" % [
+			human_seat, _is_authority(), live,
+			multiplayer.get_unique_id() if live else 0,
+			multiplayer.multiplayer_peer.get_connection_status() if live else -1])
 		SteamLobby.disconnected_unexpectedly.connect(_on_disconnected_unexpectedly)
+		if not live and not _headless:
+			# the peer never came up (see steam_lobby.gd _start_peer failure) -
+			# don't drop the player into an unplayable board
+			_on_disconnected_unexpectedly.call_deferred("Couldn't connect. Back to the menu.")
+			return
 		if _headless:
 			# Neither a headless host nor a headless client has a UI to drag
 			# cards with, so both need a stand-in for OUR seat specifically -
@@ -449,8 +455,12 @@ func _bot_excluded_seats() -> Array:
 func _perform(action: Dictionary) -> void:
 	if _is_authority():
 		await _apply_and_animate(action)
-		if NetSession.active:
+		if NetSession.active and multiplayer.has_multiplayer_peer():
 			net_apply_action.rpc(_action_to_wire(action))
+	elif not multiplayer.has_multiplayer_peer():
+		# the connection to the host is gone - stop trying to talk to it
+		_awaiting_ack = false
+		_on_disconnected_unexpectedly("Lost connection to the host.")
 	else:
 		_awaiting_ack = true
 		net_request_action.rpc_id(1, _action_to_wire(action))
