@@ -115,6 +115,12 @@ func _sift(game) -> void:
 		game.effect_log.append(
 			"Sift shuffles %d card%s from the discard back into the talon" % [
 				moved, "" if moved == 1 else "s"])
+	else:
+		# Always log, even the no-op: the discard pile is genuinely empty this
+		# early in a hand (nothing has ever been successfully defended yet), and
+		# a silent no-op reads as "the card didn't work" rather than "nothing to
+		# shuffle yet" - what actually happened.
+		game.effect_log.append("Sift finds nothing in the discard to shuffle")
 
 
 func _barbed(game, defender: int) -> void:
