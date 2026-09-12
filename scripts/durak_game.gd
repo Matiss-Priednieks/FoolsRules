@@ -19,10 +19,25 @@ extends RefCounted
 ## and the _*_target / _*_cap / _can_play_* query hooks let a held or in-play
 ## special change refill counts, attack caps, and play legality.
 ##
+## Reserve (spec 4): each seat has a private magazine of specials, drafted one
+## at a time (draft_pick, ambient - available whenever offered, alongside
+## whatever else that seat can currently do) and drawn into a hand only via
+## refill, in place of a talon card (refill_choice, spec 4.1). Reserve cards
+## are manufactured on the spot, not part of pool_size()'s count - they're a
+## genuinely separate supply, which is the only way "may come from the talon
+## OR your reserve" means anything. See _generate_draft_offers()/_advance_refill().
+##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
-##   - _debug_seed_specials() stands in for the real draft/reserve (spec 4),
-##     not built yet - see its own doc comment
+##   - the draft pool only offers ids SpecialEffects actually implements (8 of
+##     17 so far) - drafting an inert card would be a dead pick; Joker is
+##     excluded entirely, being rankless (spec 5) in an engine that can't
+##     represent that yet
+##   - a drafted card's rank is fixed to its catalogue rank_hint, not rolled -
+##     spec 3.1 ties power to rank, but the draft doesn't offer rank choice
+##   - refill-from-reserve is one swap-in per seat per round (spec 4.1 doesn't
+##     specify granularity), not a full per-card negotiation - a big hand
+##     isn't a wall of identical prompts
 
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)
@@ -32,7 +47,27 @@ const MIN_RANK := 6       # a 4-or-fewer-player game uses the classic 36-card de
 const MIN_RANK_BIG := 2   # 5+ players: full 2..A ranks, and more than one deck if the pool needs it
 const MAX_PLAYERS := 24   # the hard ceiling; the board and balance are only really tuned to ~6
 
-enum Phase { ATTACK, DEFEND, TAKING, GAME_OVER }
+const DRAFT_ROUNDS := 6         # spec 4.2: six picks over six rounds
+const RESERVE_CAP := 6          # spec 4.1: up to 6 specials in reserve (a consequence of DRAFT_ROUNDS, not enforced separately)
+const DRAFT_OFFER_SIZE := 3     # spec 4.2: one pick from three
+const DRAFT_CATCHUP_SIZE := 4   # spec 4.3: whoever holds the most cards gets a 4th option
+
+## Pool of ids SpecialEffects actually implements. Extend this the instant a
+## new card's behaviour lands - see durak_game.gd's own doc comment.
+const DRAFT_POOL: Array[StringName] = [
+	&"overwhelm_bulwark", &"light", &"millstone", &"deadweight",
+	&"sift", &"muzzle", &"barbed_cull", &"greedy_last",
+]
+## Round 1 offers boons only (spec 4.2 - nobody has a read on the table yet).
+## Payload is the family the spec itself frames as "curses" throughout (4.4, 8.1).
+const DRAFT_CURSE_FAMILY := SpecialCards.Family.PAYLOAD
+## Spec 4.3's suggested catch-up subset (Bulwark/Light/Cull/Sift), translated to
+## the merged dual-mode ids that actually carry those halves now.
+const DRAFT_DEFENSIVE_IDS: Array[StringName] = [
+	&"overwhelm_bulwark", &"light", &"barbed_cull", &"sift",
+]
+
+enum Phase { ATTACK, DEFEND, TAKING, REFILL_CHOICE, GAME_OVER }
 
 ## Special-card effect trigger points (spec 9). Event triggers fire through
 ## _fire() at the moment named; "while held" modifiers are queried instead, via
@@ -81,6 +116,22 @@ var _refill_last_seat: int = -1               # this seat refills last, this rou
 var _throw_in_locked: Dictionary = {}         # seat -> true: no attack/throw-in this bout
 var _throw_in_locked_next: Dictionary = {}    # queued to activate next bout (Muzzle: "next round")
 
+## Reserve (spec 4). Always allocated (one empty array per seat), even in
+## vanilla play, so get_legal_actions()/etc. never need an `effects != null`
+## guard just to index them - _generate_draft_offers() is the only thing that
+## ever actually populates them, and it's a no-op while effects is null.
+var reserves: Array[Array] = []       # reserves[seat] : Array[CardData], each is_special(), <= RESERVE_CAP
+var draft_offers: Array[Array] = []   # draft_offers[seat] : Array[CardData] currently offered, [] = none pending
+var draft_picks_used: Array[int] = [] # lifetime picks made per seat, capped at DRAFT_ROUNDS
+var reserve_cards_created := 0        # running count - total_card_count()'s conserved total grows by this many
+
+# Staged refill (spec 4.1's "talon or reserve" choice needs the engine to be
+# able to pause mid-refill for a decision, unlike the single synchronous pass
+# vanilla refill used to be). See _resolve_bout()/_advance_refill().
+var _refill_pending: Array[int] = []  # seats still to refill this bout, in order
+var _refill_choice_seat: int = -1     # seat currently offered a refill_choice, -1 = none
+var _pending_attacker: int = -1       # staged attacker for the bout about to start, once refills finish
+
 ## Set to a SpecialEffects instance to switch the roguelike layer on. null =
 ## pure vanilla: _fire() is a no-op and the query hooks return plain values.
 ## Passed into _init(), not assigned after, because specials are physically
@@ -104,6 +155,18 @@ func _init(players: int = 4, game_seed: int = 0, game_effects: Object = null) ->
 func get_legal_actions(seat: int) -> Array[Dictionary]:
 	var actions: Array[Dictionary] = []
 	if phase == Phase.GAME_OVER or is_out[seat]:
+		return actions
+
+	# Draft picks (spec 4.2) are ambient - available whenever offered, on top of
+	# whatever else this seat can currently do, not a phase of their own.
+	for card in draft_offers[seat]:
+		actions.append({type = "draft_pick", player = seat, card = card})
+
+	if phase == Phase.REFILL_CHOICE:
+		if seat == _refill_choice_seat:
+			actions.append({type = "refill_choice", player = seat})  # draw from the talon
+			for card in reserves[seat]:
+				actions.append({type = "refill_choice", player = seat, card = card})
 		return actions
 
 	if seat == defender:
@@ -160,7 +223,7 @@ func is_finished() -> bool:
 	return phase == Phase.GAME_OVER
 
 
-func total_card_count() -> int:  # invariant helper: always == pool_size()
+func total_card_count() -> int:  # invariant helper: always == pool_size() + reserve_cards_created
 	var total := deck.size() + discard.size()
 	for pair in table:
 		total += 1
@@ -168,6 +231,8 @@ func total_card_count() -> int:  # invariant helper: always == pool_size()
 			total += 1
 	for hand in hands:
 		total += hand.size()
+	for reserve in reserves:
+		total += reserve.size()
 	return total
 
 
@@ -185,6 +250,8 @@ func apply_action(action: Dictionary) -> bool:
 		"deflect": _apply_deflect(action.player, action.card)
 		"take": _apply_take(action.player)
 		"pass": _apply_pass(action.player)
+		"draft_pick": _apply_draft_pick(action.player, action.card)
+		"refill_choice": _apply_refill_choice(action.player, action.get("card"))
 		_: return false
 	return true
 
@@ -195,6 +262,9 @@ func _build_and_deal() -> void:
 	for seat in num_players:
 		hands.append([] as Array[CardData])
 		is_out.append(false)
+		reserves.append([] as Array[CardData])
+		draft_offers.append([] as Array[CardData])
+		draft_picks_used.append(0)
 
 	# spec 3.5: cards in circulation set the match clock (pool_size = 6/player + 12).
 	# <=4 players: the classic single 36-card deck. 5+: full 2..A ranks, and as
@@ -209,8 +279,6 @@ func _build_and_deal() -> void:
 	_shuffle(deck)
 	if deck.size() > pool_size():
 		deck.resize(pool_size())
-	if effects != null:
-		_debug_seed_specials()
 
 	trump_card = deck[0]
 	trump_suit = trump_card.suit
@@ -222,6 +290,7 @@ func _build_and_deal() -> void:
 	attacker = _find_first_attacker()
 	defender = _next_active(attacker)
 	_set_attack_limit()
+	_generate_draft_offers()  # spec 4.2: round 1's offers
 
 
 ## spec 3.5: 6 per player plus a 12-card buffer.
@@ -229,19 +298,76 @@ func pool_size() -> int:
 	return 6 * num_players + 12
 
 
-## TEMPORARY stand-in for the real acquisition path (spec 4: private reserve +
-## staggered draft, neither built yet). Tags one card per implemented special so
-## each is actually reachable for manual/fuzz testing while its behaviour is
-## being built - dealt straight into an opening hand (there's always at least
-## a 24-card pool, so this always fits inside the deal). Delete this once the
-## draft/reserve exists; add an id here the moment a new card's behaviour lands.
-func _debug_seed_specials() -> void:
-	var ids: Array[StringName] = [
-		&"overwhelm_bulwark", &"light", &"millstone", &"deadweight",
-		&"sift", &"muzzle", &"barbed_cull", &"greedy_last",
-	]
-	for i in mini(ids.size(), deck.size()):
-		deck[deck.size() - 1 - i].special = ids[i]
+# --------------------------------------------------------------- reserve / draft
+
+## Spec 4.2: at the start of a round (each bout, up to DRAFT_ROUNDS of them per
+## seat), every active seat still drafting is shown fresh specials and picks
+## one via a "draft_pick" action - see get_legal_actions()/_apply_draft_pick().
+## No-op entirely while effects is null (vanilla).
+func _generate_draft_offers() -> void:
+	if effects == null:
+		return
+	var catchup_seat := _catchup_seat()
+	for seat in num_players:
+		if is_out[seat] or draft_picks_used[seat] >= DRAFT_ROUNDS or not draft_offers[seat].is_empty():
+			continue
+		var size := DRAFT_CATCHUP_SIZE if seat == catchup_seat else DRAFT_OFFER_SIZE
+		draft_offers[seat] = _roll_offer(seat, size)
+
+
+## Spec 4.3: the seat holding the most cards gets a 4th draft option - but
+## only when someone's actually ahead of the pack (a fresh deal, or several
+## seats tied at the top, isn't "the player currently holding the most cards",
+## it's just the shape of a normal hand). Ties for the max break to the lowest
+## seat number. -1 if nobody's still drafting, or nobody's actually struggling.
+func _catchup_seat() -> int:
+	var sizes := {}  # seat -> hand size, insertion order == seat order
+	for seat in num_players:
+		if is_out[seat] or draft_picks_used[seat] >= DRAFT_ROUNDS:
+			continue
+		sizes[seat] = hands[seat].size()
+	if sizes.is_empty():
+		return -1
+	var max_size: int = sizes.values().max()
+	if max_size == sizes.values().min():
+		return -1
+	for seat in sizes:
+		if sizes[seat] == max_size:
+			return seat
+	return -1
+
+
+func _roll_offer(seat: int, size: int) -> Array[CardData]:
+	var pool := DRAFT_POOL.duplicate()
+	if draft_picks_used[seat] == 0:  # spec 4.2: round 1 is boons only
+		pool = pool.filter(func(id): return SpecialCards.DEFS[id].family != DRAFT_CURSE_FAMILY)
+	var chosen: Array[StringName] = []
+	for _i in mini(size, DRAFT_OFFER_SIZE):
+		if pool.is_empty():
+			break
+		var id: StringName = pool[_rng.randi_range(0, pool.size() - 1)]
+		pool.erase(id)
+		chosen.append(id)
+	if size > DRAFT_OFFER_SIZE:  # spec 4.3: the 4th, catch-up slot leans defensive
+		var defensive: Array[StringName] = DRAFT_DEFENSIVE_IDS.filter(
+			func(id): return id not in chosen)
+		if defensive.is_empty():
+			defensive = DRAFT_POOL.filter(func(id): return id not in chosen)
+		if not defensive.is_empty():
+			chosen.append(defensive[_rng.randi_range(0, defensive.size() - 1)])
+	var offer: Array[CardData] = []
+	for id in chosen:
+		offer.append(_make_special_card(id))
+	return offer
+
+
+## A freshly manufactured special card for the draft. Not part of pool_size()'s
+## count - the reserve is a genuinely separate supply (see the class doc
+## comment). Rank is the catalogue's rank_hint (spec 3.1: rank is the price);
+## suit is random and otherwise meaningless for a special.
+func _make_special_card(id: StringName) -> CardData:
+	var rank: int = clampi(SpecialCards.DEFS[id].rank_hint, MIN_RANK, 14)
+	return CardData.new(_rng.randi_range(0, 3), rank, id)
 
 
 func _set_attack_limit() -> void:
@@ -415,6 +541,35 @@ func _apply_pass(seat: int) -> void:
 		_maybe_resolve_defense()
 
 
+func _apply_draft_pick(seat: int, card: CardData) -> void:
+	reserves[seat].append(card)
+	draft_offers[seat] = []
+	draft_picks_used[seat] += 1
+	reserve_cards_created += 1
+	effect_log.append("P%d drafts %s into their reserve" % [seat, SpecialCards.DEFS[card.special].name])
+	state_changed.emit()
+
+
+## `card` is null for "draw from the talon"; otherwise the specific reserve
+## card to draw instead (spec 4.1). Either way this seat's refill is now
+## settled for this round - _advance_refill() moves on to the next seat, or
+## finishes the new bout if that was the last one.
+func _apply_refill_choice(seat: int, card: CardData) -> void:
+	if card == null:
+		if not deck.is_empty():
+			var talon_card: CardData = deck.pop_back()
+			hands[seat].append(talon_card)
+			_fire(Trigger.ON_REFILL, [talon_card], {seat = seat, drawn = [talon_card]})
+	else:
+		reserves[seat].erase(card)
+		hands[seat].append(card)
+		_fire(Trigger.ON_REFILL, [card], {seat = seat, drawn = [card]})
+	_refill_choice_seat = -1
+	_refill_pending.pop_front()
+	state_changed.emit()
+	_advance_refill()
+
+
 # ------------------------------------------------------------------ bout resolution
 
 func _maybe_resolve_defense() -> void:
@@ -459,14 +614,97 @@ func _resolve_bout(defender_took: bool) -> void:
 		_fire(Trigger.ON_DEFENSE_SUCCESS, taken,
 			{defender = defender, attacks = bout_attacks, defenses = bout_defenses})
 
-	var next_attacker := _next_active(defender) if defender_took else defender
-	_refill()
-	_update_out()
+	_pending_attacker = _next_active(defender) if defender_took else defender
 
 	# Muzzle's "next round" lockout activates for the bout that's about to
 	# start, not the one that just ended - this is the boundary between them.
 	_throw_in_locked = _throw_in_locked_next
 	_throw_in_locked_next = {}
+
+	# Spec 4.2/4.3: offered before refill, while "holding the most cards" is
+	# most meaningful (refill normalizes everyone back toward target).
+	_generate_draft_offers()
+
+	# Refill order: the bout that's about to start's attacker first, its
+	# defender last (spec 2) - not the bout that just ended's. is_out won't
+	# change again until _finish_new_bout()'s _update_out(), so it's safe to
+	# compute the upcoming defender here for ordering purposes.
+	var new_defender := _next_active(_pending_attacker)
+	_refill_pending = []
+	var seat := _pending_attacker
+	for _step in num_players:
+		if not is_out[seat]:
+			_refill_pending.append(seat)
+		seat = (seat + 1) % num_players
+	_refill_pending.erase(new_defender)
+	if not is_out[new_defender]:
+		_refill_pending.append(new_defender)
+
+	# Greedy/Last (spec 5, Economy): one-shot reorderings for this round only.
+	# Both consumed here regardless of whether they actually apply (the seat
+	# might already be out, or not in this round's order at all).
+	if _refill_priority_seat != -1 and _refill_pending.has(_refill_priority_seat):
+		_refill_pending.erase(_refill_priority_seat)
+		_refill_pending.push_front(_refill_priority_seat)
+	if _refill_last_seat != -1 and _refill_pending.has(_refill_last_seat):
+		_refill_pending.erase(_refill_last_seat)
+		_refill_pending.push_back(_refill_last_seat)
+	_refill_priority_seat = -1
+	_refill_last_seat = -1
+
+	_advance_refill()
+
+
+## Steps through _refill_pending one seat at a time. A seat with an empty
+## reserve draws its whole quota from the talon in one go, same as vanilla. A
+## seat with a non-empty reserve gets need-1 drawn automatically first, then
+## pauses in Phase.REFILL_CHOICE for the one remaining slot (spec 4.1's "may
+## come from the talon or your reserve", as a single per-round decision - not
+## a full per-card negotiation, so a big hand isn't a wall of prompts).
+## Spec 4.5: once the talon's dry, every refill stops outright, reserve
+## included - no partial fallback to reserve once there's nothing left to
+## choose between.
+func _advance_refill() -> void:
+	while not _refill_pending.is_empty():
+		if deck.is_empty():
+			_refill_pending.clear()
+			break
+		var seat: int = _refill_pending[0]
+		# Computed once per seat, not per draw: _refill_target() consumes a
+		# one-shot override (Barbed) the first time it's called, so calling it
+		# again mid-loop would silently fall back to a different target partway
+		# through this seat's own draw.
+		var target := _refill_target(seat)
+		var need := target - hands[seat].size()
+		if need <= 0:
+			_refill_pending.pop_front()
+			continue
+
+		var offer_choice := not reserves[seat].is_empty()
+		var auto_draws := need - 1 if offer_choice else need
+		var drawn: Array[CardData] = []
+		while auto_draws > 0 and not deck.is_empty():
+			var card: CardData = deck.pop_back()
+			hands[seat].append(card)
+			drawn.append(card)
+			auto_draws -= 1
+		# Fired after drawing, with what was actually drawn, so an on-draw
+		# special (Forge/Tithe) sees itself as freshly arrived - firing before
+		# the draw (the old behaviour) meant it could never see its own card.
+		if not drawn.is_empty():
+			_fire(Trigger.ON_REFILL, drawn, {seat = seat, drawn = drawn})
+
+		if hands[seat].size() >= target or deck.is_empty():
+			_refill_pending.pop_front()  # done, or the talon ran dry mid-draw - no choice left to offer
+			continue
+		_refill_choice_seat = seat
+		phase = Phase.REFILL_CHOICE
+		return
+	_finish_new_bout()
+
+
+func _finish_new_bout() -> void:
+	_update_out()
 
 	if _active_count() <= 1:
 		phase = Phase.GAME_OVER
@@ -477,6 +715,7 @@ func _resolve_bout(defender_took: bool) -> void:
 		game_over.emit(loser)
 		return
 
+	var next_attacker := _pending_attacker
 	if is_out[next_attacker]:
 		next_attacker = _next_active(next_attacker)
 	attacker = next_attacker
@@ -484,46 +723,6 @@ func _resolve_bout(defender_took: bool) -> void:
 	_set_attack_limit()
 	phase = Phase.ATTACK
 	state_changed.emit()
-
-
-func _refill() -> void:
-	var refill_order: Array[int] = []
-	var seat := attacker
-	for _step in num_players:
-		if not is_out[seat]:
-			refill_order.append(seat)
-		seat = (seat + 1) % num_players
-	refill_order.erase(defender)          # defender always refills last
-	if not is_out[defender]:
-		refill_order.append(defender)
-
-	# Greedy/Last (spec 5, Economy): one-shot reorderings for this round only.
-	# Both consumed here regardless of whether they actually apply (the seat
-	# might already be out, or not in this round's order at all).
-	if _refill_priority_seat != -1 and refill_order.has(_refill_priority_seat):
-		refill_order.erase(_refill_priority_seat)
-		refill_order.push_front(_refill_priority_seat)
-	if _refill_last_seat != -1 and refill_order.has(_refill_last_seat):
-		refill_order.erase(_refill_last_seat)
-		refill_order.push_back(_refill_last_seat)
-	_refill_priority_seat = -1
-	_refill_last_seat = -1
-
-	for refilling_seat in refill_order:
-		# Computed once per seat, not per draw: _refill_target() consumes a
-		# one-shot override (Barbed) the first time it's called, so calling it
-		# again mid-loop would silently fall back to a different target partway
-		# through this seat's own draw.
-		var target := _refill_target(refilling_seat)
-		var drawn: Array[CardData] = []
-		while hands[refilling_seat].size() < target and not deck.is_empty():
-			var card: CardData = deck.pop_back()
-			hands[refilling_seat].append(card)
-			drawn.append(card)
-		# Fired after drawing, with what was actually drawn, so an on-draw
-		# special (Forge/Tithe) sees itself as freshly arrived - firing before
-		# the draw (the old behaviour) meant it could never see its own card.
-		_fire(Trigger.ON_REFILL, drawn, {seat = refilling_seat, drawn = drawn})
 
 
 func _update_out() -> void:

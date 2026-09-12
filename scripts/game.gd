@@ -25,6 +25,8 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 0.5, 0.01) var deal_gap := 0.045 ## opening deal: gap between consecutive cards
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
 @export_range(0.0, 30.0, 0.5) var throw_in_seconds := 5.0 ## auto-pass a throw-in choice left untouched this long (0 disables)
+@export_range(0.0, 60.0, 1.0) var draft_seconds := 8.0 ## auto-pick a random draft offer left untouched this long (spec 4.2; 0 disables)
+@export_range(0.0, 60.0, 1.0) var refill_choice_seconds := 8.0 ## auto-draw from the talon if a refill choice (spec 4.1) sits untouched this long (0 disables)
 
 @export_group("Card feel")
 @export_range(0.0, 160.0, 1.0) var hover_raise := 62.0 ## px a hovered hand card lifts
@@ -87,6 +89,7 @@ var game: DurakGame
 @onready var _status_label: Label = $UI/Root/StatusLabel # top line: trump / phase / pile counts
 @onready var _effect_toast: Label = $UI/Root/EffectToast # "Barbed refills P2 to 7 this round" etc.
 @onready var _card_tooltip: Label = $UI/Root/CardTooltip # hover text for a special card's effect
+@onready var _reserve_label: Label = $UI/Root/ReserveLabel # the human's own reserve (spec 4.1, owner-visible only)
 @onready var _talon_label: Label = $UI/Root/TalonLabel
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
 @onready var _seat_labels: Array[Label] = [
@@ -123,11 +126,15 @@ var _move_pending := false # human has laid ≥1 card this turn, not yet release
 var _awaiting_ack := false # multiplayer client: our own action is in flight to the host
 var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
+var _draft_buttons: Array[Button] = []  # rebuilt each resync - spec 4.2, ambient, 3-4 wide
+var _refill_choice_buttons: Array[Button] = []  # rebuilt each resync - spec 4.1, talon + up to RESERVE_CAP wide
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
 var _menu_open := false # the mid-game menu overlay is up; blocks board input, does NOT pause
 var _throw_in_deadline := -1.0 # Time.get_ticks_msec()/1000.0 value; -1 = no throw-in timer running
+var _draft_deadline := -1.0 # same, for a pending draft offer (spec 4.2)
+var _refill_choice_deadline := -1.0 # same, for a pending refill_choice (spec 4.1)
 var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
@@ -384,11 +391,11 @@ func _show_end_screen(loser: int) -> void:
 		var place := game.finish_order.find(human_seat)
 		_end_title.text = "You got out %s" % ["1st", "2nd", "3rd", "4th"][maxi(place, 0)]
 	else:
-		_end_title.text = "P%d is the durak" % loser
+		_end_title.text = "%s is the durak" % _display_name(loser)
 	var rows: Array[String] = []
 	for i in game.finish_order.size():
 		var seat: int = game.finish_order[i]
-		var who := "You" if seat == human_seat else "P%d" % seat
+		var who := _display_name(seat)
 		var outcome := "durak" if i == game.finish_order.size() - 1 else "safe"
 		rows.append("%d.  %s  —  %s" % [i + 1, who, outcome])
 	_end_standings.text = "\n".join(rows)
@@ -1095,7 +1102,8 @@ var _effect_toast_until := 0.0
 ## band on the card itself - a placeholder for real presentation, not the
 ## final UI). Empty in vanilla play.
 func _flash_effect(messages: Array[String]) -> void:
-	_effect_queue.append_array(messages)
+	for msg in messages:
+		_effect_queue.append(_localize_seat_names(msg))
 
 
 func _update_effect_toast() -> void:
@@ -1177,10 +1185,58 @@ func _update_throw_in_timer() -> void:
 				return
 
 
+func _draft_pick_actions() -> Array:
+	return _human_actions().filter(func(a): return a.type == "draft_pick")
+
+
+func _refill_choice_actions() -> Array:
+	return _human_actions().filter(func(a): return a.type == "refill_choice")
+
+
+## Spec 4.2: "short timer; on expiry, a random one of the three is auto-picked
+## (never nothing)". Random here is a client-local UI decision, not engine
+## state - it just becomes a normal submitted action, so it doesn't need
+## game._rng the way an effect's own randomness would.
+func _update_draft_timer() -> void:
+	var offers := _draft_pick_actions()
+	if draft_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack or offers.is_empty():
+		_draft_deadline = -1.0
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if _draft_deadline < 0.0:
+		_draft_deadline = now + draft_seconds
+		return
+	if now >= _draft_deadline:
+		_draft_deadline = -1.0
+		_submit(offers[randi() % offers.size()])
+
+
+## No spec guidance on a refill-choice timeout; defaulting to the talon (the
+## always-safe, reserve-preserving option) rather than a random reserve draw
+## seems the least surprising choice for an AFK/thinking-too-long player.
+func _update_refill_choice_timer() -> void:
+	var choices := _refill_choice_actions()
+	if refill_choice_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack or choices.is_empty():
+		_refill_choice_deadline = -1.0
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if _refill_choice_deadline < 0.0:
+		_refill_choice_deadline = now + refill_choice_seconds
+		return
+	if now >= _refill_choice_deadline:
+		_refill_choice_deadline = -1.0
+		for choice in choices:
+			if choice.get("card") == null:
+				_submit(choice)
+				return
+
+
 func _process(_delta: float) -> void:
 	_update_effect_toast()
 	_update_card_tooltip()
 	_update_throw_in_timer()
+	_update_draft_timer()
+	_update_refill_choice_timer()
 
 	if _hand_slots.is_empty():
 		return
@@ -1263,6 +1319,33 @@ func _view_rect(view: Node2D) -> Rect2:
 
 func _near_seat() -> int:
 	return human_seat if human_seat >= 0 else 0
+
+
+## The name to show for `seat`: "You" for the local human, a Steam username for
+## anyone else with one (local or networked, single- or multiplayer -
+## NetSession populates player_names/seat_is_bot the same way in every mode),
+## "P<seat>" only as the bot/no-name fallback.
+func _display_name(seat: int) -> String:
+	if seat == human_seat:
+		return "You"
+	if seat < NetSession.seat_is_bot.size() and not NetSession.seat_is_bot[seat]:
+		var name: String = NetSession.player_names[seat]
+		if name != "":
+			return name
+	return "P%d" % seat
+
+
+## Rewrites every "P<n>" seat reference in an engine-generated message (e.g.
+## SpecialEffects' effect_log lines) to _display_name(n) - the engine only
+## knows seat numbers, never player identity, by design (see durak_game.gd).
+func _localize_seat_names(text: String) -> String:
+	var result := text
+	# Highest seat number first: "P10" contains "P1" as a literal substring, so
+	# replacing P1 before P10 would corrupt it. A higher seat number is always
+	# the longer (or equal) string, so descending order never has this problem.
+	for seat in range(game.num_players - 1, -1, -1):
+		result = result.replace("P%d" % seat, _display_name(seat))
+	return result
 
 
 func _seat_layout(seat: int) -> Dictionary:
@@ -1431,6 +1514,7 @@ func _resync() -> void:
 	_rebuild_input_targets()
 	_update_status()
 	_update_buttons()
+	_update_reserve_ui()
 
 	# _process drives the hand every frame (fan pose + hover); drop the settle
 	# tween so the two don't fight over the same transform
@@ -1523,7 +1607,7 @@ func _update_seat_label(seat: int) -> void:
 			role = "  ▶ attacker"
 		elif seat == game.defender:
 			role = "  ◀ defender"
-	var who := "You" if seat == human_seat else "P%d" % seat
+	var who := _display_name(seat)
 	var label := _seat_labels[seat]
 	label.text = "%s   (%d)%s" % [who, game.hands[seat].size(), role]
 	label.add_theme_color_override("font_color", Color.GOLD if role != "" else Color.WHITE)
@@ -1649,6 +1733,44 @@ func _update_buttons() -> void:
 	_take_button.visible = offered.call("take") \
 		and (game.phase == DurakGame.Phase.TAKING or _unbeaten_count() > 0)
 	_deflect_strip.visible = offered.call("deflect")
+
+
+## Reserve panel (spec 4.1, owner-visible only) + the two ambient decision rows
+## it feeds: draft picks (spec 4.2) and the talon-vs-reserve refill choice
+## (spec 4.1). Dev-quality plain buttons, same spirit as the rest of this
+## layer's placeholder visuals - a real draft screen/reserve tray is later work.
+func _update_reserve_ui() -> void:
+	_reserve_label.visible = human_seat >= 0 and game != null
+	if _reserve_label.visible:
+		var names: Array = []
+		for card in game.reserves[human_seat]:
+			names.append(SpecialCards.DEFS[card.special].name)
+		_reserve_label.text = "Reserve: %s" % (", ".join(names) if not names.is_empty() else "(empty)")
+
+	_draft_buttons = _rebuild_choice_row(_draft_buttons, _draft_pick_actions(), Vector2(24, 78),
+		func(a: Dictionary) -> String:
+			return "Draft: %s %s" % [SpecialCards.DEFS[a.card.special].name, str(a.card)])
+	_refill_choice_buttons = _rebuild_choice_row(
+		_refill_choice_buttons, _refill_choice_actions(), Vector2(24, 78 + _draft_buttons.size() * 34 + 10),
+		func(a: Dictionary) -> String:
+			return "Refill: Talon" if a.get("card") == null \
+				else "Refill: %s %s" % [SpecialCards.DEFS[a.card.special].name, str(a.card)])
+
+
+func _rebuild_choice_row(pool: Array[Button], actions: Array, origin: Vector2, label_of: Callable) -> Array[Button]:
+	for b in pool:
+		b.queue_free()
+	var new_pool: Array[Button] = []
+	for i in actions.size():
+		var action: Dictionary = actions[i]
+		var b := Button.new()
+		b.text = label_of.call(action)
+		b.position = origin + Vector2(0, i * 34)
+		b.custom_minimum_size = Vector2(280, 30)
+		b.pressed.connect(func(): _submit(action))
+		_ui_root.add_child(b)
+		new_pool.append(b)
+	return new_pool
 
 
 func _unbeaten_count() -> int:

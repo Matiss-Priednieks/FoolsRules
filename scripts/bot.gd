@@ -15,6 +15,25 @@ static func pick(game: DurakGame, excluded_seats: Array = []) -> Dictionary:
 
 	var trump: int = game.trump_suit
 
+	# 0. Ambient administrative choices (spec 4) cost nothing to resolve and
+	# must not get starved out by an always-busy table - draft picks are
+	# available alongside every other action a seat can take, so with enough
+	# bots that always have *something* tactical to do, one's own pick could
+	# otherwise never bubble up through the priority chain below.
+	var drafts := actions.filter(func(action): return action.type == "draft_pick")
+	if not drafts.is_empty():
+		# Any randomness here MUST go through game._rng, not global random -
+		# bots run identically on every multiplayer peer from the same replayed
+		# action stream, and reserve strategy is deferred smartness (see the
+		# class doc), so a uniform random pick is the honest placeholder.
+		return drafts[game._rng.randi_range(0, drafts.size() - 1)]
+	var refill_choices := actions.filter(func(action): return action.type == "refill_choice")
+	if not refill_choices.is_empty():
+		for choice in refill_choices:
+			if choice.get("card") == null:  # always draw from the talon for now
+				return choice
+		return refill_choices[0]
+
 	# 1. Beat the attack with the cheapest card that does the job.
 	var defends := actions.filter(func(action): return action.type == "defend")
 	if not defends.is_empty():
