@@ -7,7 +7,10 @@ extends RefCounted
 ## Contract:
 ##   handle(id, trigger, game, ctx)  - event triggers. `trigger` is a
 ##       DurakGame.Trigger value; `ctx` shape is documented on the enum.
-##       Only act if SpecialCards.DEFS[id].trigger matches this trigger.
+##       Only act if SpecialCards.trigger_of(id, role) matches this trigger -
+##       a dual-mode card (spec 3.8) needs the right role, attack or defense,
+##       which ctx/table tells you (was this id the attack or defense card in
+##       the bout that just fired the trigger).
 ##   refill_target(seat, game, base) - "while held" query: return the number of
 ##       cards `seat` should refill to (default `base`, = DurakGame.HAND_SIZE).
 ##   attack_cap(defender, game, base) - "while held" query: return the max cards
@@ -26,7 +29,7 @@ func handle(id: StringName, trigger: int, _game, _ctx: Dictionary) -> void:
 	if TRACE:
 		print("[fx] %s <- trigger %d" % [id, trigger])
 	# No effects implemented yet. Each card gets a branch here, gated on
-	# SpecialCards.DEFS[id].trigger, as it's built.
+	# SpecialCards.trigger_of(id, role), as it's built.
 	match id:
 		_:
 			pass
