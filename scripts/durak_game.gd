@@ -301,6 +301,27 @@ func _table_ranks() -> Array:
 	return ranks.keys()
 
 
+## Sticky pass (house rule): once a seat declines to add a card this bout, it
+## stays declined - re-asking it every time someone else adds a card that
+## changes nothing for THEM would just be noise. Only reopened when a card
+## just placed introduces a rank that wasn't on the table a moment ago (a
+## genuinely new throw-in opportunity, not a second copy of one already
+## offered and declined), and then only for seats who actually hold that rank -
+## a new option someone else can use doesn't reopen anyone else's decision.
+func _reopen_pass_for_new_ranks(ranks_before: Array) -> void:
+	var new_ranks: Array = []
+	for rank in _table_ranks():
+		if rank not in ranks_before:
+			new_ranks.append(rank)
+	if new_ranks.is_empty():
+		return
+	for seat in passed.keys().duplicate():
+		for card in hands[seat]:
+			if card.rank in new_ranks:
+				passed.erase(seat)
+				break
+
+
 func _can_add_attack(seat: int) -> bool:
 	if hands[seat].is_empty():
 		return false
@@ -342,9 +363,10 @@ func _can_deflect() -> bool:
 # ------------------------------------------------------------------ action apply
 
 func _apply_attack(seat: int, card: CardData) -> void:
+	var ranks_before := _table_ranks()
 	hands[seat].erase(card)
 	table.append({attack = card, defense = null})
-	passed.clear()
+	_reopen_pass_for_new_ranks(ranks_before)
 	if phase == Phase.ATTACK:
 		phase = Phase.DEFEND
 	state_changed.emit()
@@ -357,20 +379,22 @@ func _apply_attack(seat: int, card: CardData) -> void:
 
 
 func _apply_defend(seat: int, card: CardData, target: int) -> void:
+	var ranks_before := _table_ranks()
 	hands[seat].erase(card)
 	table[target].defense = card
-	passed.clear()
+	_reopen_pass_for_new_ranks(ranks_before)
 	state_changed.emit()
 	_fire(Trigger.ON_DEFENSE_PLAYED, [card], {seat = seat, card = card, target = target})
 	_maybe_resolve_defense()
 
 
 func _apply_deflect(seat: int, card: CardData) -> void:
+	var ranks_before := _table_ranks()
 	hands[seat].erase(card)
 	table.append({attack = card, defense = null})
 	defender = _next_active(defender)  # old defender is now just an attacker
 	_set_attack_limit()                # cap now follows the new defender's hand
-	passed.clear()
+	_reopen_pass_for_new_ranks(ranks_before)
 	state_changed.emit()
 	_fire(Trigger.ON_THROW_IN, [card], {seat = seat, card = card})
 

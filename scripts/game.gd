@@ -24,6 +24,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 1.0, 0.01) var deal_fly := 0.24 ## opening deal: one card's flight from the talon
 @export_range(0.0, 0.5, 0.01) var deal_gap := 0.045 ## opening deal: gap between consecutive cards
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
+@export_range(0.0, 30.0, 0.5) var throw_in_seconds := 5.0 ## auto-pass a throw-in choice left untouched this long (0 disables)
 
 @export_group("Card feel")
 @export_range(0.0, 160.0, 1.0) var hover_raise := 62.0 ## px a hovered hand card lifts
@@ -126,6 +127,7 @@ var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
 var _menu_open := false # the mid-game menu overlay is up; blocks board input, does NOT pause
+var _throw_in_deadline := -1.0 # Time.get_ticks_msec()/1000.0 value; -1 = no throw-in timer running
 var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
@@ -1134,9 +1136,51 @@ func _update_card_tooltip() -> void:
 	_card_tooltip.visible = false
 
 
+## True exactly while the human has a "pass" among their legal actions - which
+## only ever happens mid-bout, on the attacking side, never for the opening
+## lead (no pass to give) or while defending (no pass action exists there
+## either). Reusing "pass is legal" instead of tracking this separately means
+## the sticky-pass rule above (durak_game.gd._reopen_pass_for_new_ranks) is
+## also what reopens - and, on timeout, restarts - this timer for free.
+func _human_has_throw_in_choice() -> bool:
+	for action in _human_actions():
+		if action.type == "pass":
+			return true
+	return false
+
+
+## Auto-passes a throw-in choice the human hasn't acted on within
+## throw_in_seconds, so one AFK or thinking-too-long player can't stall
+## everyone else forever. Counts down only while the choice is actually live
+## and interactive; anything that takes it off the table (they act, the bout
+## resolves, the menu opens) clears the deadline, and it starts fresh next
+## time _human_has_throw_in_choice() turns true again.
+func _update_throw_in_timer() -> void:
+	if throw_in_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack \
+	or not _human_has_throw_in_choice():
+		_throw_in_deadline = -1.0
+		if _pass_button.visible:
+			_pass_button.text = "Pass"
+		return
+
+	var now := Time.get_ticks_msec() / 1000.0
+	if _throw_in_deadline < 0.0:
+		_throw_in_deadline = now + throw_in_seconds
+
+	var remaining := _throw_in_deadline - now
+	_pass_button.text = "Pass (%d)" % ceili(maxf(remaining, 0.0))
+	if remaining <= 0.0:
+		_throw_in_deadline = -1.0
+		for action in _human_actions():
+			if action.type == "pass":
+				_submit(action)
+				return
+
+
 func _process(_delta: float) -> void:
 	_update_effect_toast()
 	_update_card_tooltip()
+	_update_throw_in_timer()
 
 	if _hand_slots.is_empty():
 		return
