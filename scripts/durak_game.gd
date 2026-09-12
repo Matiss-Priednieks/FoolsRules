@@ -14,13 +14,15 @@ extends RefCounted
 ## spec 3.6). Table-shape specials override the cap.
 ##
 ## Roguelike layer (spec 3.1, 9): special cards are ordinary ranked cards with a
-## CardData.special id. The engine stays vanilla unless `_effects` is set; when
-## it is, _fire() dispatches the trigger-point events below and the _*_target /
-## _*_cap query hooks let "while held" modifiers change refill counts and caps.
+## CardData.special id. The engine stays vanilla unless `effects` is set; when
+## it is, _fire() dispatches the trigger-point events below to SpecialEffects,
+## and the _*_target / _*_cap / _can_play_* query hooks let a held or in-play
+## special change refill counts, attack caps, and play legality.
 ##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
-##   - 5-6 player pools (spec 3.5) need a base deck larger than 36; not built
+##   - _debug_seed_specials() stands in for the real draft/reserve (spec 4),
+##     not built yet - see its own doc comment
 
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)
@@ -36,12 +38,12 @@ enum Phase { ATTACK, DEFEND, TAKING, GAME_OVER }
 ## _fire() at the moment named; "while held" modifiers are queried instead, via
 ## _refill_target() / _attack_cap().
 enum Trigger {
-	ON_REFILL,           # a seat is about to draw its refill      ctx = {seat}
-	ON_PICKUP,           # a seat took the table into its hand      ctx = {seat, cards}
-	ON_DEFENSE_SUCCESS,  # a bout resolved, defender beat it all    ctx = {defender}
-	ON_DEFENSE_PLAYED,   # a defend card was placed                 ctx = {seat, card, target}
-	ON_THROW_IN,         # an attack/throw-in card was placed       ctx = {seat, card}
-	ON_ATTACK_END,       # a bout is being halted early by a card   ctx = {defender, beaten}
+	ON_REFILL,           # a seat just drew its refill                     ctx = {seat, drawn}
+	ON_PICKUP,           # a seat took the table into its hand             ctx = {seat, cards}
+	ON_DEFENSE_SUCCESS,  # a bout resolved, defender beat it all           ctx = {defender, attacks, defenses}
+	ON_DEFENSE_PLAYED,   # a defend card was placed                        ctx = {seat, card, target}
+	ON_THROW_IN,         # an attack/throw-in card was placed              ctx = {seat, card}
+	ON_ATTACK_END,       # a bout is being halted early by a card          ctx = {defender, beaten}
 }
 
 var num_players: int
@@ -63,6 +65,21 @@ var is_out: Array[bool] = []       # finished the game (empty hand, empty talon)
 var finish_order: Array[int] = []  # seats in the order they went out; the durak is last
 var loser: int = -1
 var seed_used: int
+
+## Short human-readable notes on what a special just did (e.g. "P2's Cull
+## discards a 6C"). Cleared at the top of every apply_action(); the view drains
+## it after animating to show a toast. Empty in vanilla play.
+var effect_log: Array[String] = []
+
+# One-shot modifier slots a special writes into and the engine consumes once.
+# Kept generic - this is plumbing any future on-play modifier can reuse, not
+# behaviour itself (spec 9: data, not code); it just happens that Greedy/Last/
+# Barbed/Muzzle are the only current writers.
+var _refill_target_override: Dictionary = {}  # seat -> target, consumed by _refill_target()
+var _refill_priority_seat: int = -1           # this seat refills first, this round only
+var _refill_last_seat: int = -1               # this seat refills last, this round only
+var _throw_in_locked: Dictionary = {}         # seat -> true: no attack/throw-in this bout
+var _throw_in_locked_next: Dictionary = {}    # queued to activate next bout (Muzzle: "next round")
 
 ## Set to a SpecialEffects instance to switch the roguelike layer on. null =
 ## pure vanilla: _fire() is a no-op and the query hooks return plain values.
@@ -94,7 +111,7 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 			for slot in table.size():
 				if table[slot].defense == null:
 					for card in hands[seat]:
-						if card.beats(table[slot].attack, trump_suit):
+						if card.beats(table[slot].attack, trump_suit) and _can_play_defense(card):
 							actions.append({type = "defend", player = seat, card = card, target = slot})
 			if _can_deflect():
 				var lead_rank: int = table[0].attack.rank
@@ -110,17 +127,18 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 	# attacking side: everyone who is not the defender
 	if table.is_empty():
 		# opening the bout: only the primary attacker, one card to start
-		if seat == attacker and _can_add_attack(seat):
+		if seat == attacker and _can_add_attack(seat) and not _throw_in_locked.has(seat):
 			for card in hands[seat]:
-				actions.append({type = "attack", player = seat, card = card})
+				if _can_play_attack(card, true):
+					actions.append({type = "attack", player = seat, card = card})
 		return actions
 
 	# bout in progress (defender is beating cards off or taking): throw in a card
 	# of a rank already on the table, or pass
-	if _can_add_attack(seat):
+	if _can_add_attack(seat) and not _throw_in_locked.has(seat):
 		var ranks_on_table := _table_ranks()
 		for card in hands[seat]:
-			if card.rank in ranks_on_table:
+			if card.rank in ranks_on_table and _can_play_attack(card, false):
 				actions.append({type = "attack", player = seat, card = card})
 	if not passed.has(seat) and not hands[seat].is_empty():
 		actions.append({type = "pass", player = seat})
@@ -160,6 +178,7 @@ func apply_action(action: Dictionary) -> bool:
 		return false
 	if not _is_legal(action):
 		return false
+	effect_log.clear()
 	match action.type:
 		"attack": _apply_attack(action.player, action.card)
 		"defend": _apply_defend(action.player, action.card, action.target)
@@ -211,11 +230,18 @@ func pool_size() -> int:
 
 
 ## TEMPORARY stand-in for the real acquisition path (spec 4: private reserve +
-## staggered draft, neither built yet). Tags one card so a special is actually
-## reachable for manual/fuzz testing while a card's behaviour is being built.
-## Delete this once the draft/reserve exists.
+## staggered draft, neither built yet). Tags one card per implemented special so
+## each is actually reachable for manual/fuzz testing while its behaviour is
+## being built - dealt straight into an opening hand (there's always at least
+## a 24-card pool, so this always fits inside the deal). Delete this once the
+## draft/reserve exists; add an id here the moment a new card's behaviour lands.
 func _debug_seed_specials() -> void:
-	deck[deck.size() - 1].special = &"overwhelm_bulwark"
+	var ids: Array[StringName] = [
+		&"overwhelm_bulwark", &"light", &"millstone", &"deadweight",
+		&"sift", &"muzzle", &"barbed_cull", &"greedy_last",
+	]
+	for i in mini(ids.size(), deck.size()):
+		deck[deck.size() - 1 - i].special = ids[i]
 
 
 func _set_attack_limit() -> void:
@@ -322,7 +348,7 @@ func _apply_attack(seat: int, card: CardData) -> void:
 	if phase == Phase.ATTACK:
 		phase = Phase.DEFEND
 	state_changed.emit()
-	_fire(Trigger.ON_THROW_IN, {seat = seat, card = card})
+	_fire(Trigger.ON_THROW_IN, [card], {seat = seat, card = card})
 	# A throw-in can be the last possible attack (hand emptied, or table full).
 	if phase == Phase.TAKING:
 		_maybe_resolve_taking()
@@ -335,7 +361,7 @@ func _apply_defend(seat: int, card: CardData, target: int) -> void:
 	table[target].defense = card
 	passed.clear()
 	state_changed.emit()
-	_fire(Trigger.ON_DEFENSE_PLAYED, {seat = seat, card = card, target = target})
+	_fire(Trigger.ON_DEFENSE_PLAYED, [card], {seat = seat, card = card, target = target})
 	_maybe_resolve_defense()
 
 
@@ -346,7 +372,7 @@ func _apply_deflect(seat: int, card: CardData) -> void:
 	_set_attack_limit()                # cap now follows the new defender's hand
 	passed.clear()
 	state_changed.emit()
-	_fire(Trigger.ON_THROW_IN, {seat = seat, card = card})
+	_fire(Trigger.ON_THROW_IN, [card], {seat = seat, card = card})
 
 
 func _apply_take(seat: int) -> void:
@@ -391,25 +417,32 @@ func _someone_may_still_attack() -> bool:
 
 
 func _resolve_bout(defender_took: bool) -> void:
-	var taken: Array[CardData] = []
+	var bout_attacks: Array[CardData] = []
+	var bout_defenses: Array[CardData] = []
 	for pair in table:
-		var destination: Array = hands[defender] if defender_took else discard
-		destination.append(pair.attack)
-		taken.append(pair.attack)
+		bout_attacks.append(pair.attack)
 		if pair.defense != null:
-			destination.append(pair.defense)
-			taken.append(pair.defense)
+			bout_defenses.append(pair.defense)
+	var taken: Array[CardData] = bout_attacks + bout_defenses
+	var destination: Array = hands[defender] if defender_took else discard
+	destination.append_array(taken)
 	table.clear()
 	passed.clear()
 
 	if defender_took:
-		_fire(Trigger.ON_PICKUP, {seat = defender, cards = taken})
+		_fire(Trigger.ON_PICKUP, taken, {seat = defender, cards = taken})
 	else:
-		_fire(Trigger.ON_DEFENSE_SUCCESS, {defender = defender})
+		_fire(Trigger.ON_DEFENSE_SUCCESS, taken,
+			{defender = defender, attacks = bout_attacks, defenses = bout_defenses})
 
 	var next_attacker := _next_active(defender) if defender_took else defender
 	_refill()
 	_update_out()
+
+	# Muzzle's "next round" lockout activates for the bout that's about to
+	# start, not the one that just ended - this is the boundary between them.
+	_throw_in_locked = _throw_in_locked_next
+	_throw_in_locked_next = {}
 
 	if _active_count() <= 1:
 		phase = Phase.GAME_OVER
@@ -439,10 +472,34 @@ func _refill() -> void:
 	refill_order.erase(defender)          # defender always refills last
 	if not is_out[defender]:
 		refill_order.append(defender)
+
+	# Greedy/Last (spec 5, Economy): one-shot reorderings for this round only.
+	# Both consumed here regardless of whether they actually apply (the seat
+	# might already be out, or not in this round's order at all).
+	if _refill_priority_seat != -1 and refill_order.has(_refill_priority_seat):
+		refill_order.erase(_refill_priority_seat)
+		refill_order.push_front(_refill_priority_seat)
+	if _refill_last_seat != -1 and refill_order.has(_refill_last_seat):
+		refill_order.erase(_refill_last_seat)
+		refill_order.push_back(_refill_last_seat)
+	_refill_priority_seat = -1
+	_refill_last_seat = -1
+
 	for refilling_seat in refill_order:
-		_fire(Trigger.ON_REFILL, {seat = refilling_seat})
-		while hands[refilling_seat].size() < _refill_target(refilling_seat) and not deck.is_empty():
-			hands[refilling_seat].append(deck.pop_back())
+		# Computed once per seat, not per draw: _refill_target() consumes a
+		# one-shot override (Barbed) the first time it's called, so calling it
+		# again mid-loop would silently fall back to a different target partway
+		# through this seat's own draw.
+		var target := _refill_target(refilling_seat)
+		var drawn: Array[CardData] = []
+		while hands[refilling_seat].size() < target and not deck.is_empty():
+			var card: CardData = deck.pop_back()
+			hands[refilling_seat].append(card)
+			drawn.append(card)
+		# Fired after drawing, with what was actually drawn, so an on-draw
+		# special (Forge/Tithe) sees itself as freshly arrived - firing before
+		# the draw (the old behaviour) meant it could never see its own card.
+		_fire(Trigger.ON_REFILL, drawn, {seat = refilling_seat, drawn = drawn})
 
 
 func _update_out() -> void:
@@ -465,32 +522,27 @@ func _last_active() -> int:
 # All no-ops while `effects` is null (vanilla). Wired now so the call sites exist
 # and are proven to fire at the right moments; SpecialEffects fills in behaviour.
 
-## Every special card currently in a hand or on the table gets a chance to react
-## to `trigger`. Discard and the undrawn talon are inert (spec 8.1 / 4.5).
-func _fire(trigger: int, ctx: Dictionary) -> void:
+## Fires `trigger` for exactly the specials in `cards` - the ones actually
+## relevant to this event (the card just played, the pile just picked up, the
+## cards just discarded, the cards just drawn). Deliberately NOT a blanket scan
+## of every special anywhere in play: a Sift sitting quietly in someone's hand
+## must not refire every time an unrelated pickup happens elsewhere.
+func _fire(trigger: int, cards: Array[CardData], ctx: Dictionary) -> void:
 	if effects == null:
 		return
-	for card in _specials_in_play():
-		effects.handle(card.special, trigger, self, ctx)
-
-
-func _specials_in_play() -> Array[CardData]:
-	var out: Array[CardData] = []
-	for hand in hands:
-		for card in hand:
-			if card.is_special():
-				out.append(card)
-	for pair in table:
-		if pair.attack.is_special():
-			out.append(pair.attack)
-		if pair.defense != null and pair.defense.is_special():
-			out.append(pair.defense)
-	return out
+	for card in cards:
+		if card.is_special():
+			effects.handle(card.special, card, trigger, self, ctx)
 
 
 ## How many cards `seat` refills to this round. Default HAND_SIZE; Light lowers
-## it, Millstone/Barbed raise it (spec 5, Economy).
+## it, Millstone raises it (spec 5). A one-shot override (Barbed) wins over
+## either and is consumed here.
 func _refill_target(seat: int) -> int:
+	if _refill_target_override.has(seat):
+		var target: int = _refill_target_override[seat]
+		_refill_target_override.erase(seat)
+		return target
 	if effects == null:
 		return HAND_SIZE
 	return effects.refill_target(seat, self, HAND_SIZE)
@@ -504,6 +556,23 @@ func _attack_cap(defender_seat: int) -> int:
 	if effects == null:
 		return base
 	return effects.attack_cap(defender_seat, self, base)
+
+
+## Whether `card` may be played as an attack/throw-in right now. `is_lead` is
+## true only when it would open a fresh bout (table empty). Default true;
+## Deadweight (spec 5, Payload) restricts it to lead-only.
+func _can_play_attack(card: CardData, is_lead: bool) -> bool:
+	if effects == null:
+		return true
+	return effects.can_play_attack(card, is_lead, self)
+
+
+## Whether `card` may be played to beat an attack right now. Default true;
+## Deadweight (spec 5, Payload) forbids it outright.
+func _can_play_defense(card: CardData) -> bool:
+	if effects == null:
+		return true
+	return effects.can_play_defense(card, self)
 
 
 # ------------------------------------------------------------------ validation

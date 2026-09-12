@@ -84,6 +84,7 @@ var game: DurakGame
 @onready var _ui_layer: CanvasLayer = $UI
 @onready var _ui_root: Control = $UI/Root # every Control below hangs off this one themed node
 @onready var _status_label: Label = $UI/Root/StatusLabel # top line: trump / phase / pile counts
+@onready var _effect_toast: Label = $UI/Root/EffectToast # "Barbed refills P2 to 7 this round" etc.
 @onready var _talon_label: Label = $UI/Root/TalonLabel
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
 @onready var _seat_labels: Array[Label] = [
@@ -699,6 +700,10 @@ func _apply_and_animate(action: Dictionary) -> void:
 	var bout_defender: int = game.defender
 
 	game.apply_action(action)
+	# Captured immediately - apply_action() clears effect_log at its own next
+	# call, and a bot's next move could come before this one finishes animating.
+	if not game.effect_log.is_empty():
+		_flash_effect(game.effect_log.duplicate())
 
 	# sort every moved card into what happened to it
 	var played: Array[CardData] = []
@@ -1076,7 +1081,24 @@ func _end_drag() -> void:
 		view.z_index = 0
 
 
+var _effect_toast_until := 0.0
+
+
+## Shows the special-card catalogue's effect log as a toast (dev-quality
+## visible feedback, same spirit as the name band on the card itself - a
+## placeholder for real presentation, not the final UI). Empty in vanilla play.
+func _flash_effect(messages: Array[String]) -> void:
+	if messages.is_empty() or _effect_toast == null:
+		return
+	_effect_toast.text = "  ".join(messages)
+	_effect_toast_until = Time.get_ticks_msec() / 1000.0 + 3.5
+
+
 func _process(_delta: float) -> void:
+	if _effect_toast != null and _effect_toast.text != "" \
+	and Time.get_ticks_msec() / 1000.0 > _effect_toast_until:
+		_effect_toast.text = ""
+
 	if _hand_slots.is_empty():
 		return
 

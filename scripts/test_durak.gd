@@ -21,6 +21,18 @@ static var _deflect_seen := 0
 ## all, since _debug_seed_specials() is the only source of one right now.
 static var _overwhelm_bulwark_seen := 0
 
+## games in which a while_held special (query-hook only, no event to log) was
+## seen active in some hand - proves the query hook actually got exercised
+## with the card physically in play, not just dealt and never checked.
+const WHILE_HELD_IDS: Array[StringName] = [&"light", &"millstone", &"deadweight"]
+static var _while_held_seen := {}   # id -> games count
+
+## games in which an event-fired special actually logged doing something -
+## SpecialEffects.handle() prefixes every message with the card's display
+## name, so this is a generic "did it fire" tally, not per-card boilerplate.
+const EVENT_KEYWORDS := ["Sift", "Barbed", "Cull", "Greedy", "Last", "Muzzle"]
+static var _event_seen := {}        # keyword -> games count
+
 
 func _initialize() -> void:
 	var failures := 0
@@ -40,11 +52,15 @@ func _initialize() -> void:
 	print("games per player count: %s" % by_count)
 	print("games where deflect was offered: %d / %d" % [_deflect_seen, GAMES])
 	print("games where overwhelm_bulwark was played: %d / %d" % [_overwhelm_bulwark_seen, GAMES])
+	print("games where each while-held special was active: %s / %d" % [_while_held_seen, GAMES])
+	print("games where each event-fired special logged an effect: %s / %d" % [_event_seen, GAMES])
 	quit(1 if failures > 0 else 0)
 
 
 var _this_game_saw_deflect := false
 var _this_game_saw_overwhelm_bulwark := false
+var _this_game_while_held: Dictionary = {}
+var _this_game_events: Dictionary = {}
 
 
 func _play_random_game(game_seed: int, players: int) -> Dictionary:
@@ -53,6 +69,8 @@ func _play_random_game(game_seed: int, players: int) -> Dictionary:
 	var steps := 0
 	_this_game_saw_deflect = false
 	_this_game_saw_overwhelm_bulwark = false
+	_this_game_while_held = {}
+	_this_game_events = {}
 
 	while not game.is_finished():
 		steps += 1
@@ -69,6 +87,15 @@ func _play_random_game(game_seed: int, players: int) -> Dictionary:
 				or (pair.defense != null and pair.defense.special == &"overwhelm_bulwark"):
 					_this_game_saw_overwhelm_bulwark = true
 					_overwhelm_bulwark_seen += 1
+					break
+
+		for id in WHILE_HELD_IDS:
+			if _this_game_while_held.has(id):
+				continue
+			for hand in game.hands:
+				if hand.any(func(c): return c.special == id):
+					_this_game_while_held[id] = true
+					_while_held_seen[id] = _while_held_seen.get(id, 0) + 1
 					break
 
 		var legal := game.get_all_legal_actions()
@@ -92,6 +119,12 @@ func _play_random_game(game_seed: int, players: int) -> Dictionary:
 		if not game.apply_action(action):
 			return {ok = false, steps = steps,
 				msg = "apply_action rejected a legal action: %s" % action}
+
+		for msg in game.effect_log:
+			for kw in EVENT_KEYWORDS:
+				if not _this_game_events.has(kw) and msg.begins_with(kw):
+					_this_game_events[kw] = true
+					_event_seen[kw] = _event_seen.get(kw, 0) + 1
 
 	var problem := _check_invariants(game)
 	if problem != "":
@@ -121,7 +154,13 @@ func _check_invariants(game: DurakGame) -> String:
 		if game.is_out[game.defender] or game.is_out[game.attacker]:
 			return "an out player is attacking/defending"
 
-	return _check_attack_cap(game)
+	var cap_problem := _check_attack_cap(game)
+	if cap_problem != "":
+		return cap_problem
+	var deadweight_problem := _check_deadweight(game)
+	if deadweight_problem != "":
+		return deadweight_problem
+	return _check_muzzle(game)
 
 
 ## Targeted assertion for Overwhelm/Bulwark (spec 5, Table-shape). Checks the
@@ -154,6 +193,28 @@ func _check_attack_cap(game: DurakGame) -> String:
 			if action.type == "attack":
 				return "seat %d offered an attack at the cap (%d, overwhelm=%s bulwark=%s)" % [
 					seat, cap, has_overwhelm, has_bulwark]
+	return ""
+
+
+## Targeted assertion for Deadweight (spec 5, Payload): never legal to defend
+## with one, and never legal to throw it in once the table already has a card
+## on it (lead-only).
+func _check_deadweight(game: DurakGame) -> String:
+	for action in game.get_all_legal_actions():
+		if action.type == "defend" and action.card.special == &"deadweight":
+			return "Deadweight offered as a defend"
+		if action.type == "attack" and action.card.special == &"deadweight" and not game.table.is_empty():
+			return "Deadweight offered as a throw-in (table not empty)"
+	return ""
+
+
+## Targeted assertion for Muzzle (spec 5, Payload): a seat currently locked
+## out (_throw_in_locked, "next round") must never be offered an attack.
+func _check_muzzle(game: DurakGame) -> String:
+	for seat in game._throw_in_locked:
+		for action in game.get_legal_actions(seat):
+			if action.type == "attack":
+				return "seat %d muzzled but offered an attack" % seat
 	return ""
 
 
