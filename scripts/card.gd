@@ -39,6 +39,20 @@ func setup(card_suit: String, card_rank: int, is_face_up := true) -> void:
 	face_up = is_face_up
 
 
+## Dev-quality "this card is special" tag - a name band across the bottom.
+## Placeholder for the real presentation pass (spec 9: icon + border, rank/suit
+## still legible, hover tooltip for full text); good enough to prove the
+## roguelike layer is actually reaching the table.
+func set_special(id: StringName) -> void:
+	var band: ColorRect = $SpecialBand
+	var label: Label = $SpecialLabel
+	var known := SpecialCards.exists(id)
+	band.visible = known
+	label.visible = known
+	if known:
+		label.text = SpecialCards.DEFS[id].name
+
+
 func _fx_material() -> ShaderMaterial:
 	if _fx == null:
 		_fx = ShaderMaterial.new()

@@ -4,3 +4,24 @@
 
 [node name="Sprite2D" type="Sprite2D" unique_id=901492980]
 script = ExtResource("1_kikvd")
+
+[node name="SpecialBand" type="ColorRect" parent="."]
+visible = false
+offset_left = -250.0
+offset_top = 250.0
+offset_right = 250.0
+offset_bottom = 363.0
+color = Color(0, 0, 0, 0.65)
+
+[node name="SpecialLabel" type="Label" parent="."]
+visible = false
+offset_left = -250.0
+offset_top = 250.0
+offset_right = 250.0
+offset_bottom = 363.0
+theme_override_colors/font_color = Color(1, 0.83, 0.2, 1)
+theme_override_font_sizes/font_size = 56
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+text = "Special"

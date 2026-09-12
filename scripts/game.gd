@@ -227,7 +227,9 @@ func _new_game() -> void:
 	# deal itself, so they all build the same DurakGame from the same seed.
 	var game_seed := NetSession.seed if NetSession.active else 0
 	var players := NetSession.num_players if NetSession.active else 4
-	game = DurakGame.new(players, game_seed)
+	# SpecialEffects is stateless (all randomness goes through game._rng), so a
+	# fresh instance per peer stays sync-safe under the same seed.
+	game = DurakGame.new(players, game_seed, SpecialEffects.new())
 	_ensure_seat_labels(game.num_players)
 	game.game_over.connect(_on_game_over)
 	_deal_out() # animate the deal, then settle + hand off to the bots
@@ -1334,6 +1336,7 @@ func _resync() -> void:
 func _create_view(card: CardData) -> Sprite2D:
 	var view := _instance_card()
 	view.setup(CardData.SUIT_NAMES[card.suit], card.rank, true)
+	view.set_special(card.special)
 	view.position = _view_start_pos(card)
 	view.scale = Vector2.ONE * (talon_card_height / maxf(view.texture.get_height(), 1.0))
 	view.z_index = 10

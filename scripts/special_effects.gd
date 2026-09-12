@@ -39,5 +39,18 @@ func refill_target(_seat: int, _game, base: int) -> int:
 	return base
 
 
-func attack_cap(_defender: int, _game, base: int) -> int:
-	return base
+## Overwhelm / Bulwark (spec 5, Table-shape) is the first card implemented -
+## chosen to prove the dual-mode pattern (spec 3.8) end to end: one id, two
+## roles, told apart by which side of the table pairing it's sitting on.
+## Called both at bout start (table is already cleared then, so this is a
+## no-op) and live on every _can_add_attack() check thereafter, so playing
+## either half takes effect the instant the card lands.
+func attack_cap(_defender: int, game, base: int) -> int:
+	var result := base
+	for pair in game.table:
+		if pair.attack.special == &"overwhelm_bulwark":
+			result += 2  # Overwhelm: this attack may exceed the base cap by 2
+	for pair in game.table:
+		if pair.defense != null and pair.defense.special == &"overwhelm_bulwark":
+			result = mini(result, 4)  # Bulwark: attacks against you cap at 4 - wins any tie with Overwhelm
+	return result

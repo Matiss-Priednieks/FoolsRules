@@ -66,16 +66,19 @@ var seed_used: int
 
 ## Set to a SpecialEffects instance to switch the roguelike layer on. null =
 ## pure vanilla: _fire() is a no-op and the query hooks return plain values.
+## Passed into _init(), not assigned after, because specials are physically
+## part of the deck (spec 3.1) - _build_and_deal() needs to know before it runs.
 var effects: Object = null
 
 var _rng := RandomNumberGenerator.new()
 
 
-func _init(players: int = 4, game_seed: int = 0) -> void:
+func _init(players: int = 4, game_seed: int = 0, game_effects: Object = null) -> void:
 	num_players = clampi(players, 2, MAX_PLAYERS)
 	seed_used = game_seed if game_seed != 0 else \
 		int(Time.get_unix_time_from_system() * 1000.0) & 0x7fffffff
 	_rng.seed = seed_used
+	effects = game_effects
 	_build_and_deal()
 
 
@@ -187,6 +190,8 @@ func _build_and_deal() -> void:
 	_shuffle(deck)
 	if deck.size() > pool_size():
 		deck.resize(pool_size())
+	if effects != null:
+		_debug_seed_specials()
 
 	trump_card = deck[0]
 	trump_suit = trump_card.suit
@@ -203,6 +208,14 @@ func _build_and_deal() -> void:
 ## spec 3.5: 6 per player plus a 12-card buffer.
 func pool_size() -> int:
 	return 6 * num_players + 12
+
+
+## TEMPORARY stand-in for the real acquisition path (spec 4: private reserve +
+## staggered draft, neither built yet). Tags one card so a special is actually
+## reachable for manual/fuzz testing while a card's behaviour is being built.
+## Delete this once the draft/reserve exists.
+func _debug_seed_specials() -> void:
+	deck[deck.size() - 1].special = &"overwhelm_bulwark"
 
 
 func _set_attack_limit() -> void:
@@ -265,7 +278,19 @@ func _table_ranks() -> Array:
 func _can_add_attack(seat: int) -> bool:
 	if hands[seat].is_empty():
 		return false
-	return table.size() < attack_limit
+	return table.size() < _current_attack_cap()
+
+
+## `attack_limit` is frozen once at bout start (see _set_attack_limit) so it
+## never double-counts a card the defender has already spent defending. A
+## table-shape special played mid-bout (Overwhelm as an attack, Bulwark as a
+## defense) needs to take effect the instant it lands though, so this re-derives
+## the *live* cap from it on every call by rescanning the table - cheap, the
+## table is always small - instead of ever re-touching hand size.
+func _current_attack_cap() -> int:
+	if effects == null:
+		return attack_limit
+	return effects.attack_cap(defender, self, attack_limit)
 
 
 func _can_deflect() -> bool:
