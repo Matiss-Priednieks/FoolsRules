@@ -14,9 +14,9 @@ const LobbyMemberRow := preload("res://scenes/lobby_member_row.tscn")
 @onready var _browse_panel: Control = $BrowsePanel
 @onready var _room_panel: Control = $RoomPanel
 
-@onready var _singleplayer_button: Button = $MainPanel/MainBox/SingleplayerButton
-@onready var _multiplayer_button: Button = $MainPanel/MainBox/MultiplayerButton
-@onready var _quit_button: Button = $MainPanel/MainBox/QuitButton
+@onready var _singleplayer_button: Button = $MainPanel/MarginContainer/MainBox/SingleplayerButton
+@onready var _multiplayer_button: Button = $MainPanel/MarginContainer/MainBox/MultiplayerButton
+@onready var _quit_button: Button = $MainPanel/MarginContainer/MainBox/QuitButton
 
 @onready var _list_publicly_check: CheckButton = $BrowsePanel/BrowseBox/ListPubliclyCheck
 @onready var _host_button: Button = $BrowsePanel/BrowseBox/HostButton

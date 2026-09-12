@@ -8,7 +8,7 @@
 [ext_resource type="StyleBox" uid="uid://cm5e5jnexfa1q" path="res://shaders/theme_resources/button_box_pressed.tres" id="4_g3eks"]
 
 [sub_resource type="Theme" id="Theme_con2f"]
-Button/font_sizes/font_size = 25
+Button/font_sizes/font_size = 40
 Button/fonts/font = ExtResource("1_con2f")
 Button/styles/hover = ExtResource("2_4ytvr")
 Button/styles/normal = ExtResource("2_mhnvy")
@@ -56,34 +56,40 @@ horizontal_alignment = 1
 
 [node name="MainPanel" type="CenterContainer" parent="." unique_id=354402861]
 layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_top = -152.0
+offset_right = 597.0
+offset_bottom = 152.0
 grow_vertical = 2
 
-[node name="MainBox" type="VBoxContainer" parent="MainPanel" unique_id=1065131762]
+[node name="MarginContainer" type="MarginContainer" parent="MainPanel" unique_id=1220690265]
+layout_mode = 2
+theme_override_constants/margin_left = 80
+
+[node name="MainBox" type="VBoxContainer" parent="MainPanel/MarginContainer" unique_id=1065131762]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="MainTitle" type="Label" parent="MainPanel/MainBox" unique_id=1123188216]
+[node name="MainTitle" type="Label" parent="MainPanel/MarginContainer/MainBox" unique_id=1123188216]
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 94
 text = "Fool's Rules"
 horizontal_alignment = 1
 
-[node name="SingleplayerButton" type="Button" parent="MainPanel/MainBox" unique_id=1722632212]
+[node name="SingleplayerButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=1722632212]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Singleplayer"
 
-[node name="MultiplayerButton" type="Button" parent="MainPanel/MainBox" unique_id=374969825]
+[node name="MultiplayerButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=374969825]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Multiplayer"
 
-[node name="QuitButton" type="Button" parent="MainPanel/MainBox" unique_id=1709899201]
+[node name="QuitButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=1709899201]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Quit"
