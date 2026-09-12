@@ -159,3 +159,15 @@ static func trigger_of(id: StringName, role: StringName = &"attack") -> StringNa
 	if def.get("dual", false):
 		return def[role].trigger if def.has(role) else &""
 	return def.get("trigger", &"")
+
+
+## Full effect text for a hover tooltip (spec 9). A single-mode card's `note`
+## as-is; a dual-mode card's two notes labelled by role, since the card reads
+## differently depending which side of the table it ends up on.
+static func tooltip_text(id: StringName) -> String:
+	if not DEFS.has(id):
+		return ""
+	var def: Dictionary = DEFS[id]
+	if not def.get("dual", false):
+		return "%s: %s" % [def.name, def.note]
+	return "%s\nAttack: %s\nDefense: %s" % [def.name, def.attack.note, def.defense.note]

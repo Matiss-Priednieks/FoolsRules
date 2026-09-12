@@ -85,6 +85,7 @@ var game: DurakGame
 @onready var _ui_root: Control = $UI/Root # every Control below hangs off this one themed node
 @onready var _status_label: Label = $UI/Root/StatusLabel # top line: trump / phase / pile counts
 @onready var _effect_toast: Label = $UI/Root/EffectToast # "Barbed refills P2 to 7 this round" etc.
+@onready var _card_tooltip: Label = $UI/Root/CardTooltip # hover text for a special card's effect
 @onready var _talon_label: Label = $UI/Root/TalonLabel
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
 @onready var _seat_labels: Array[Label] = [
@@ -1081,23 +1082,61 @@ func _end_drag() -> void:
 		view.z_index = 0
 
 
+const EFFECT_TOAST_SECONDS := 2.2 ## how long each queued effect message shows, one at a time
+
+var _effect_queue: Array[String] = []
 var _effect_toast_until := 0.0
 
 
-## Shows the special-card catalogue's effect log as a toast (dev-quality
-## visible feedback, same spirit as the name band on the card itself - a
-## placeholder for real presentation, not the final UI). Empty in vanilla play.
+## Queues the special-card catalogue's effect log to show over the table, one
+## message at a time (dev-quality visible feedback, same spirit as the name
+## band on the card itself - a placeholder for real presentation, not the
+## final UI). Empty in vanilla play.
 func _flash_effect(messages: Array[String]) -> void:
-	if messages.is_empty() or _effect_toast == null:
+	_effect_queue.append_array(messages)
+
+
+func _update_effect_toast() -> void:
+	if _effect_toast == null:
 		return
-	_effect_toast.text = "  ".join(messages)
-	_effect_toast_until = Time.get_ticks_msec() / 1000.0 + 3.5
+	var now := Time.get_ticks_msec() / 1000.0
+	if _effect_toast.text != "" and now > _effect_toast_until:
+		_effect_toast.text = ""
+	if _effect_toast.text == "" and not _effect_queue.is_empty():
+		_effect_toast.text = _effect_queue.pop_front()
+		_effect_toast_until = now + EFFECT_TOAST_SECONDS
+
+
+## Hover tooltip for any visible special card (spec 9: "hover tooltips for full
+## effect text"). Scans _card_views directly rather than the hand-only hover
+## state below, since it should also work for table cards, opponents' revealed
+## cards, and outside the human's own turn - anywhere a special is actually
+## showing its face.
+func _update_card_tooltip() -> void:
+	if _card_tooltip == null:
+		return
+	if not _menu_open:
+		var mouse := get_global_mouse_position()
+		for card in _card_views:
+			var view: Sprite2D = _card_views[card]
+			if not is_instance_valid(view) or view.texture == null or not view.visible:
+				continue
+			if not card.is_special() or not SpecialCards.exists(card.special):
+				continue
+			if _view_rect(view).has_point(mouse):
+				_card_tooltip.text = SpecialCards.tooltip_text(card.special)
+				var pos := mouse + Vector2(20, 24)
+				pos.x = minf(pos.x, 1920.0 - _card_tooltip.custom_minimum_size.x - 20.0)
+				pos.y = minf(pos.y, 1080.0 - 60.0)
+				_card_tooltip.position = pos
+				_card_tooltip.visible = true
+				return
+	_card_tooltip.visible = false
 
 
 func _process(_delta: float) -> void:
-	if _effect_toast != null and _effect_toast.text != "" \
-	and Time.get_ticks_msec() / 1000.0 > _effect_toast_until:
-		_effect_toast.text = ""
+	_update_effect_toast()
+	_update_card_tooltip()
 
 	if _hand_slots.is_empty():
 		return
