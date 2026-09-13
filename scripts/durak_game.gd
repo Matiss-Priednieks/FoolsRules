@@ -20,12 +20,15 @@ extends RefCounted
 ## special change refill counts, attack caps, and play legality.
 ##
 ## Reserve (spec 4): each seat has a private magazine of specials, drafted one
-## at a time (draft_pick, ambient - available whenever offered, alongside
-## whatever else that seat can currently do) and drawn into a hand only via
-## refill, in place of a talon card (refill_choice, spec 4.1). Reserve cards
-## are manufactured on the spot, not part of pool_size()'s count - they're a
-## genuinely separate supply, which is the only way "may come from the talon
-## OR your reserve" means anything. See _generate_draft_offers()/_advance_refill().
+## at a time (draft_pick - pauses the whole table until every offer from the
+## round is claimed, spec 4.2's "simultaneous, all players at once") and drawn
+## into a hand only via refill, in place of a talon card (refill_choice, spec
+## 4.1). Reserve cards are manufactured on the spot, not part of pool_size()'s
+## count - a genuinely separate supply, which is the only way "may come from
+## the talon OR your reserve" means anything. Once the shared talon empties, a
+## seat's own reserve becomes their personal backup talon instead of also
+## drying up (a deliberate departure from spec 4.5, user-requested) - see
+## _generate_draft_offers()/_advance_refill()/_update_out().
 ##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
@@ -347,10 +350,16 @@ func _maybe_generate_draft_offers(current_attacker: int) -> void:
 ## Every active seat still drafting (up to DRAFT_ROUNDS picks) is shown fresh
 ## specials and picks one via a "draft_pick" action - see
 ## get_legal_actions()/_apply_draft_pick(). No-op entirely while effects is
-## null (vanilla). Call via _maybe_generate_draft_offers(), not directly -
-## this itself doesn't gate on the once-per-round cadence.
+## null (vanilla), or once the talon's empty (spec 4.5: "no new specials enter
+## play" past that point - drafted cards are manufactured on the spot, not
+## part of pool_size()'s count, so without this the pool would be unbounded,
+## just gated by DRAFT_ROUNDS rather than by cards actually in circulation).
+## A pending offer already made before the talon ran dry stays pickable - this
+## only stops *new* ones from being generated. Call via
+## _maybe_generate_draft_offers(), not directly - this itself doesn't gate on
+## the once-per-round cadence.
 func _generate_draft_offers() -> void:
-	if effects == null:
+	if effects == null or deck.is_empty():
 		return
 	var catchup_seat := _catchup_seat()
 	for seat in num_players:
@@ -707,45 +716,64 @@ func _resolve_bout(defender_took: bool) -> void:
 ## pauses in Phase.REFILL_CHOICE for the one remaining slot (spec 4.1's "may
 ## come from the talon or your reserve", as a single per-round decision - not
 ## a full per-card negotiation, so a big hand isn't a wall of prompts).
-## Spec 4.5: once the talon's dry, every refill stops outright, reserve
-## included - no partial fallback to reserve once there's nothing left to
-## choose between.
+## Spec 4.5 revised (user-requested): the desktop spec has refills stop
+## outright once the talon's dry, reserve included. Here, a seat's own reserve
+## instead becomes their personal backup talon at that point - mandatory
+## (no choice left to offer, there's nothing to choose between anymore) and
+## capped at the normal per-round target same as ever, but it has to run out
+## too before that seat can be marked out (_update_out()).
 func _advance_refill() -> void:
 	while not _refill_pending.is_empty():
-		if deck.is_empty():
-			_refill_pending.clear()
-			break
 		var seat: int = _refill_pending[0]
 		# Computed once per seat, not per draw: _refill_target() consumes a
 		# one-shot override (Barbed) the first time it's called, so calling it
 		# again mid-loop would silently fall back to a different target partway
 		# through this seat's own draw.
 		var target := _refill_target(seat)
-		var need := target - hands[seat].size()
-		if need <= 0:
-			_refill_pending.pop_front()
-			continue
-
-		var offer_choice := not reserves[seat].is_empty()
-		var auto_draws := need - 1 if offer_choice else need
 		var drawn: Array[CardData] = []
-		while auto_draws > 0 and not deck.is_empty():
-			var card: CardData = deck.pop_back()
-			hands[seat].append(card)
-			drawn.append(card)
-			auto_draws -= 1
+		var needs_choice := false
+
+		while hands[seat].size() < target:
+			var talon_left := not deck.is_empty()
+			var reserve_left := not reserves[seat].is_empty()
+			if talon_left and reserve_left:
+				# spec 4.1: the choice is only offered for the last card
+				# needed this round - the rest draw automatically from the
+				# talon, same as always.
+				if hands[seat].size() == target - 1:
+					needs_choice = true
+					break
+				var card: CardData = deck.pop_back()
+				hands[seat].append(card)
+				drawn.append(card)
+			elif reserve_left:
+				# Spec 4.5, revised (user-requested): once the shared talon's
+				# dry, a seat's own reserve becomes their personal backup
+				# talon - mandatory, no choice left to offer since there's no
+				# talon alternative anymore - and it must fully drain before
+				# this seat can ever be marked out (see _update_out()), same
+				# as the talon itself always has to for everyone else.
+				var card: CardData = reserves[seat].pop_back()
+				hands[seat].append(card)
+				drawn.append(card)
+			elif talon_left:
+				var card: CardData = deck.pop_back()
+				hands[seat].append(card)
+				drawn.append(card)
+			else:
+				break  # nothing left anywhere for this seat, regardless of target
+
 		# Fired after drawing, with what was actually drawn, so an on-draw
 		# special (Forge/Tithe) sees itself as freshly arrived - firing before
 		# the draw (the old behaviour) meant it could never see its own card.
 		if not drawn.is_empty():
 			_fire(Trigger.ON_REFILL, drawn, {seat = seat, drawn = drawn})
 
-		if hands[seat].size() >= target or deck.is_empty():
-			_refill_pending.pop_front()  # done, or the talon ran dry mid-draw - no choice left to offer
-			continue
-		_refill_choice_seat = seat
-		phase = Phase.REFILL_CHOICE
-		return
+		if needs_choice:
+			_refill_choice_seat = seat
+			phase = Phase.REFILL_CHOICE
+			return
+		_refill_pending.pop_front()
 	_finish_new_bout()
 
 
@@ -775,7 +803,11 @@ func _update_out() -> void:
 	if not deck.is_empty():
 		return
 	for seat in num_players:
-		if not is_out[seat] and hands[seat].is_empty():
+		# User-requested revision to spec 4.5: a seat's own reserve is now a
+		# personal backup talon once the shared one dries up (_advance_refill()
+		# drains it mandatorily), so it has to be empty too before they can be
+		# marked out - an unspent reserve can no longer let you finish early.
+		if not is_out[seat] and hands[seat].is_empty() and reserves[seat].is_empty():
 			is_out[seat] = true
 			finish_order.append(seat)
 			# An eliminated seat can never claim a pending draft offer again

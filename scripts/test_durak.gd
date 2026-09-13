@@ -215,9 +215,15 @@ func _check_invariants(game: DurakGame) -> String:
 ## Targeted assertion for the reserve/draft (spec 4): a seat's lifetime picks
 ## never exceed DRAFT_ROUNDS, its reserve never exceeds RESERVE_CAP (a
 ## consequence of the pick cap, not separately enforced - worth checking that
-## it actually holds), and every card ever offered or held is a real special.
+## it actually holds), every card ever offered or held is a real special, and
+## (user-requested revision to spec 4.5) a seat is never marked out while its
+## own reserve still has cards in it - the reserve is a personal backup talon
+## now, not something that can be hoarded past the end of the hand.
 func _check_reserve(game: DurakGame) -> String:
 	for seat in game.num_players:
+		if game.is_out[seat] and not game.reserves[seat].is_empty():
+			return "seat %d is out with %d cards still in reserve" % [
+				seat, game.reserves[seat].size()]
 		if game.draft_picks_used[seat] > DurakGame.DRAFT_ROUNDS:
 			return "seat %d has drafted %d times (cap %d)" % [
 				seat, game.draft_picks_used[seat], DurakGame.DRAFT_ROUNDS]
