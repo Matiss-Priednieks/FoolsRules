@@ -51,8 +51,16 @@ static var _while_held_seen := {}   # id -> games count
 ## games in which an event-fired special actually logged doing something -
 ## SpecialEffects.handle() prefixes every message with the card's display
 ## name, so this is a generic "did it fire" tally, not per-card boilerplate.
-const EVENT_KEYWORDS := ["Sift", "Barbed", "Cull", "Greedy", "Last", "Muzzle", "Holdout", "Tithe"]
+const EVENT_KEYWORDS := ["Sift", "Barbed", "Cull", "Greedy", "Last", "Muzzle", "Holdout", "Tithe",
+	"Rebound", "Singleout", "Scramble", "Turnabout", "Palm", "Forge", "Stack"]
 static var _event_seen := {}        # keyword -> games count
+
+## games in which a query-only special (no event to log - Compel/Sidestep and
+## Riveted only ever answer can_take()/can_deflect_any_rank(), win or lose
+## silently) was ever anywhere on the table - reachability only, same idea as
+## _overwhelm_bulwark_seen above but for ids that never get their own line.
+const QUERY_ONLY_IDS: Array[StringName] = [&"compel_sidestep", &"riveted_rebound"]
+static var _query_only_seen := {}   # id -> games count
 
 
 func _initialize() -> void:
@@ -83,6 +91,7 @@ func _initialize() -> void:
 	print("games where a reserve card was drawn: %d / %d" % [_reserve_draw_seen, GAMES])
 	print("games where each while-held special was active: %s / %d" % [_while_held_seen, GAMES])
 	print("games where each event-fired special logged an effect: %s / %d" % [_event_seen, GAMES])
+	print("games where each query-only special was on the table: %s / %d" % [_query_only_seen, GAMES])
 	quit(1 if failures > 0 else 0)
 
 
@@ -90,6 +99,7 @@ var _this_game_saw_deflect := false
 var _this_game_saw_overwhelm_bulwark := false
 var _this_game_while_held: Dictionary = {}
 var _this_game_events: Dictionary = {}
+var _this_game_query_only: Dictionary = {}
 var _this_game_drafted := false
 var _this_game_drew_reserve := false
 
@@ -102,6 +112,7 @@ func _play_random_game(game_seed: int, players: int) -> Dictionary:
 	_this_game_saw_overwhelm_bulwark = false
 	_this_game_while_held = {}
 	_this_game_events = {}
+	_this_game_query_only = {}
 	_this_game_drafted = false
 	_this_game_drew_reserve = false
 
@@ -125,6 +136,15 @@ func _play_random_game(game_seed: int, players: int) -> Dictionary:
 				or (pair.defense != null and pair.defense.special == &"overwhelm_bulwark"):
 					_this_game_saw_overwhelm_bulwark = true
 					_overwhelm_bulwark_seen += 1
+					break
+
+		for id in QUERY_ONLY_IDS:
+			if _this_game_query_only.has(id):
+				continue
+			for pair in game.table:
+				if pair.attack.special == id or (pair.defense != null and pair.defense.special == id):
+					_this_game_query_only[id] = true
+					_query_only_seen[id] = _query_only_seen.get(id, 0) + 1
 					break
 
 		for id in WHILE_HELD_IDS:

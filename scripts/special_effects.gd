@@ -58,8 +58,30 @@ func handle(id: StringName, card: CardData, trigger: int, game, ctx: Dictionary)
 		&"tithe":
 			if trigger == DurakGame.Trigger.ON_REFILL:
 				_tithe(game)
+		&"singleout_ricochet":
+			if trigger == DurakGame.Trigger.ON_THROW_IN:
+				_request_singleout(game, ctx.seat)
+		&"scramble_turnabout":
+			if trigger == DurakGame.Trigger.ON_DEFENSE_SUCCESS and card in ctx.attacks:
+				_scramble(game)
+			elif trigger == DurakGame.Trigger.ON_DEFENSE_PLAYED:
+				_turnabout(game)
+		&"palm":
+			if trigger == DurakGame.Trigger.ON_THROW_IN:
+				_request_palm(game, ctx.seat)
+		&"stack":
+			if trigger == DurakGame.Trigger.ON_THROW_IN:
+				_request_stack(game, ctx.seat)
+		&"forge":
+			if trigger == DurakGame.Trigger.ON_REFILL:
+				_request_forge(game, ctx.seat)
+		&"mirror":
+			if trigger == DurakGame.Trigger.ON_THROW_IN:
+				_mirror_attack(game, ctx.seat)
+			elif trigger == DurakGame.Trigger.ON_DEFENSE_PLAYED:
+				_mirror_defense(game, ctx.seat)
 		_:
-			pass
+			pass  # compel_sidestep, riveted_rebound: can_take()/can_deflect_any_rank() query hooks only, no event
 
 
 func refill_target(seat: int, game, base: int) -> int:
@@ -106,6 +128,33 @@ func can_play_defense(card: CardData, _game) -> bool:
 	if card.special == &"deadweight":
 		return false
 	return true
+
+
+## Compel (spec 5, Table-shape): may the defender concede right now? False
+## only while a Compel attack sits unbeaten on the table AND a complete
+## defense is still legally possible - a Compel attack the defender genuinely
+## can't fully answer doesn't trap them (matches the catalogue's own wording).
+func can_take(game) -> bool:
+	var has_compel := false
+	for pair in game.table:
+		if pair.defense == null and pair.attack.special == &"compel_sidestep":
+			has_compel = true
+			break
+	if not has_compel:
+		return true
+	return not game._can_full_defense(game.defender)
+
+
+## Sidestep (spec 5, Table-shape defense half): this specific card may deflect
+## without matching the lead rank.
+func can_deflect_any_rank(card: CardData, _game) -> bool:
+	return card.special == &"compel_sidestep"
+
+
+## Ricochet (spec 5, Deflect defense half): this specific card, played as a
+## deflect, lands one seat further than usual.
+func deflect_skips_one(card: CardData, _game) -> bool:
+	return card.special == &"singleout_ricochet"
 
 
 # --- Economy --------------------------------------------------------------
@@ -216,3 +265,205 @@ func _tithe(game) -> void:
 		game.effect_log.append("Tithe collects each player's highest card")
 	else:
 		game.effect_log.append("Tithe finds no hands to collect from")
+
+
+# --- Mid-effect player choices (Palm/Singleout/Stack/Forge) ----------------
+# DurakGame only hosts the pause/resume plumbing (_request_special_choice()/
+# _apply_special_choice()); what a pending choice actually offers and does is
+# entirely this file's call, via the two functions below.
+
+## Legal "special_choice" actions for whoever `game._special_choice` names as
+## the deciding seat - called from DurakGame.get_legal_actions() every time,
+## same as any other legal-action query.
+func special_choice_actions(choice: Dictionary, game, seat: int) -> Array[Dictionary]:
+	var actions: Array[Dictionary] = []
+	match choice.kind:
+		"palm", "singleout":
+			for other in game.num_players:
+				if other == seat or game.is_out[other]:
+					continue
+				if choice.kind == "palm" and game.hands[other].is_empty():
+					continue
+				# Singleout may never hand defense to the primary attacker -
+				# the engine assumes defender != attacker everywhere else.
+				if choice.kind == "singleout" and other == game.attacker:
+					continue
+				actions.append({type = "special_choice", player = seat, target = other})
+		"stack":
+			for card in choice.pool:
+				actions.append({type = "special_choice", player = seat, card = card})
+		"forge_target":
+			for card in game.hands[seat]:
+				actions.append({type = "special_choice", player = seat, card = card})
+		"forge_source":
+			for card in game.hands[seat]:
+				if card == choice.target:
+					continue
+				actions.append({type = "special_choice", player = seat, card = card, target = 0})  # rank
+				if card.suit != game.trump_suit:
+					actions.append({type = "special_choice", player = seat, card = card, target = 1})  # suit
+	return actions
+
+
+## Applies one submitted "special_choice" action. Returns true once the whole
+## choice is resolved (DurakGame then resumes whatever was paused); false to
+## stay paused for another step of the same multi-step choice, having mutated
+## `choice` in place to carry state into that next step.
+func apply_special_choice(choice: Dictionary, game, seat: int, action: Dictionary) -> bool:
+	match choice.kind:
+		"palm":
+			_finish_palm(game, seat, action.target)
+			return true
+		"singleout":
+			_finish_singleout(game, seat, action.target)
+			return true
+		"stack":
+			choice.order.append(action.card)
+			choice.pool.erase(action.card)
+			if not choice.pool.is_empty():
+				return false
+			_finish_stack(game, seat, choice.order)
+			return true
+		"forge_target":
+			choice.kind = "forge_source"
+			choice.target = action.card
+			return false
+		"forge_source":
+			var mode := "suit" if action.get("target", 0) == 1 else "rank"
+			_finish_forge(game, seat, choice.target, action.card, mode)
+			return true
+	return true
+
+
+## Palm (spec 5, Sleight): trade one random card with a chosen opponent. Only
+## requested if some other seat actually has a card to trade - otherwise a
+## no-op log, never a choice with zero legal targets (that would deadlock the
+## table: SPECIAL_CHOICE blocks every other seat until this one answers).
+func _request_palm(game, seat: int) -> void:
+	var has_target := false
+	for other in game.num_players:
+		if other != seat and not game.is_out[other] and not game.hands[other].is_empty():
+			has_target = true
+			break
+	if not has_target:
+		game.effect_log.append("Palm finds no one to trade with")
+		return
+	game._request_special_choice(seat, "palm", {}, "attack_resolve")
+
+
+func _finish_palm(game, seat: int, target: int) -> void:
+	var mine: Array = game.hands[seat]
+	var theirs: Array = game.hands[target]
+	if mine.is_empty() or theirs.is_empty():
+		return
+	var mine_card: CardData = mine[game._rng.randi_range(0, mine.size() - 1)]
+	var their_card: CardData = theirs[game._rng.randi_range(0, theirs.size() - 1)]
+	mine.erase(mine_card)
+	theirs.erase(their_card)
+	mine.append(their_card)
+	theirs.append(mine_card)
+	game.effect_log.append("Palm trades a card between P%d and P%d" % [seat, target])
+
+
+## Singleout (spec 5, Deflect): the thrower picks who defends. Simplified to
+## the whole bout (see durak_game.gd's class doc comment) - always has at
+## least one valid target while the game is still running (the game ends the
+## instant only one seat is left active), so no empty-choice guard is needed
+## the way Palm's is.
+func _request_singleout(game, seat: int) -> void:
+	game._request_special_choice(seat, "singleout", {}, "attack_resolve")
+
+
+func _finish_singleout(game, _seat: int, target: int) -> void:
+	game.defender = target
+	game._set_attack_limit()
+	game.effect_log.append("Singleout makes P%d the defender this bout" % target)
+
+
+## Stack (spec 5, Sleight): look at the talon's top 5 and rearrange them - a
+## sequence of single-card picks (build the new order one slot at a time,
+## same UX shape as the draft) rather than one big reorder action. Only
+## requested while the talon actually has cards - otherwise there is nothing
+## to look at and the choice would have zero legal actions.
+func _request_stack(game, seat: int) -> void:
+	if game.deck.is_empty():
+		game.effect_log.append("Stack finds an empty talon to look at")
+		return
+	var n: int = mini(5, game.deck.size())
+	var pool: Array = game.deck.slice(game.deck.size() - n, game.deck.size())
+	game._request_special_choice(seat, "stack", {pool = pool, order = []}, "attack_resolve")
+
+
+func _finish_stack(game, seat: int, order: Array) -> void:
+	var n: int = order.size()
+	for i in n:
+		game.deck[game.deck.size() - n + i] = order[n - 1 - i]  # order[0] = drawn first = nearest the back
+	game.effect_log.append("Stack rearranges the talon's top %d cards for P%d" % [n, seat])
+
+
+## Forge (spec 5, Sleight): copy another hand card's rank or suit onto a
+## chosen card, until the round ends (durak_game.gd's _resolve_bout() reverts
+## it). Two-step choice (target, then source+mode) - only requested with a
+## second card actually available to copy from; ON_REFILL guarantees the
+## drawing seat's hand is never empty, but it could be down to just the one
+## card just drawn.
+func _request_forge(game, seat: int) -> void:
+	if game.hands[seat].size() < 2:
+		game.effect_log.append("Forge finds nothing else in P%d's hand to copy" % seat)
+		return
+	game._request_special_choice(seat, "forge_target", {}, "refill_continue")
+
+
+func _finish_forge(game, seat: int, target: CardData, source: CardData, mode: String) -> void:
+	game._forge_overrides.append({card = target, rank = target.rank, suit = target.suit})
+	if mode == "rank":
+		target.rank = source.rank
+		game.effect_log.append("Forge copies %s's rank onto P%d's %s" % [str(source), seat, str(target)])
+	else:
+		target.suit = source.suit
+		game.effect_log.append("Forge copies %s's suit onto P%d's %s" % [str(source), seat, str(target)])
+
+
+## Scramble (spec 5, Deflect attack half): when beaten and discarded, seating
+## order scrambles for the rest of the match. Excluded below 4 players per
+## the catalogue note - too small a table for "seating order" to mean much.
+func _scramble(game) -> void:
+	if game.num_players < 4:
+		game.effect_log.append("Scramble needs at least 4 players to shuffle seating")
+		return
+	game._shuffle(game._turn_order)
+	game.effect_log.append("Scramble shuffles the seating order for the rest of the match")
+
+
+## Turnabout (spec 5, Deflect defense half): table direction reverses,
+## permanently.
+func _turnabout(game) -> void:
+	game._turn_direction *= -1
+	game.effect_log.append("Turnabout reverses the direction of play")
+
+
+## Mirror (spec 5, Sleight): peeks write to private_log (seat-scoped, not the
+## shared effect_log toast) - the whole point is only the peeking seat sees it.
+func _mirror_attack(game, seat: int) -> void:
+	var defender_hand: Array = game.hands[game.defender]
+	if defender_hand.is_empty():
+		return
+	var pool: Array = defender_hand.duplicate()
+	game._shuffle(pool)
+	var peek: Array = pool.slice(0, mini(3, pool.size()))
+	var shown: Array = peek.map(func(c): return str(c))
+	game.private_log.append({seat = seat,
+		text = "Mirror reveals %d of P%d's cards: %s" % [peek.size(), game.defender, ", ".join(shown)]})
+
+
+func _mirror_defense(game, seat: int) -> void:
+	var lines: Array[String] = []
+	for other in game.num_players:
+		if other == seat or game.is_out[other] or game.hands[other].is_empty():
+			continue
+		var pool: Array = game.hands[other]
+		var card: CardData = pool[game._rng.randi_range(0, pool.size() - 1)]
+		lines.append("P%d: %s" % [other, str(card)])
+	if not lines.is_empty():
+		game.private_log.append({seat = seat,
+			text = "Mirror peeks at one card from each opponent - %s" % ", ".join(lines)})

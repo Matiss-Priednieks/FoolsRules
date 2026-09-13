@@ -42,15 +42,22 @@ extends RefCounted
 ##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
-##   - the draft pool only offers ids SpecialEffects actually implements (10 of
-##     17 so far) - drafting an inert card would be a dead pick; Joker is
-##     excluded entirely, being rankless (spec 5) in an engine that can't
-##     represent that yet
+##   - the draft pool offers every id SpecialEffects implements except Joker,
+##     which is excluded entirely, being rankless (spec 5) in an engine that
+##     can't represent that yet
 ##   - a drafted card's rank is fixed to its catalogue rank_hint, not rolled -
 ##     spec 3.1 ties power to rank, but the draft doesn't offer rank choice
 ##   - refill-from-reserve is one swap-in per seat per round (spec 4.1 doesn't
 ##     specify granularity), not a full per-card negotiation - a big hand
 ##     isn't a wall of identical prompts
+##   - Rebound (spec 5, Deflect) returns the redirected attack to its thrower's
+##     hand rather than making them defend it in real time - a true "they must
+##     now beat it" would need a per-slot defender, which the engine's single
+##     `defender` field for the whole bout can't represent without a bigger
+##     rework than this card is worth on its own
+##   - Singleout (spec 5, Deflect) reassigns the whole bout's defender rather
+##     than just "this one attack" - same per-slot-defender limitation as
+##     Rebound above
 
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)
@@ -73,6 +80,8 @@ const DRAFT_POOL: Array[StringName] = [
 	&"overwhelm_bulwark", &"light",
 	&"sift", &"barbed_cull", &"greedy_last",
 	&"holdout", &"tithe",
+	&"compel_sidestep", &"riveted_rebound", &"singleout_ricochet", &"scramble_turnabout",
+	&"palm", &"stack", &"forge", &"mirror",
 ]
 ## Payload (spec 5) - the family the spec frames as "curses" (4.4, 8.1) - is
 ## seeded straight into the talon at deal time instead of drafted; see
@@ -84,7 +93,7 @@ const DRAFT_DEFENSIVE_IDS: Array[StringName] = [
 	&"overwhelm_bulwark", &"light", &"barbed_cull", &"sift",
 ]
 
-enum Phase { ATTACK, DEFEND, TAKING, REFILL_CHOICE, GAME_OVER }
+enum Phase { ATTACK, DEFEND, TAKING, REFILL_CHOICE, SPECIAL_CHOICE, GAME_OVER }
 
 ## Special-card effect trigger points (spec 9). Event triggers fire through
 ## _fire() at the moment named; "while held" modifiers are queried instead, via
@@ -122,6 +131,41 @@ var seed_used: int
 ## discards a 6C"). Cleared at the top of every apply_action(); the view drains
 ## it after animating to show a toast. Empty in vanilla play.
 var effect_log: Array[String] = []
+
+## Same idea as effect_log, but seat-scoped (Mirror's peeks): {seat, text}
+## entries meant for that one seat's eyes only, not a table-wide toast.
+## Cleared at the top of every apply_action() alongside effect_log.
+var private_log: Array[Dictionary] = []
+
+## Pending mid-effect player choice (Palm/Singleout/Stack/Forge) - {} = none.
+## Set via _request_special_choice(), which blocks the whole table exactly
+## like a draft pick does (get_legal_actions() returns [] for every other
+## seat) until the deciding seat submits a "special_choice" action. See
+## _apply_special_choice() and SpecialEffects.special_choice_actions()/
+## apply_special_choice() - this class only hosts the pause/resume plumbing,
+## never what a specific kind of choice means (spec 9: data/behaviour split).
+## May also carry a `pending_fire` key (set by _fire()) when a second
+## choice-requesting card was still waiting its turn in the same batch (two
+## Forge cards drawn in one refill, say) - replayed by _apply_special_choice()
+## once this choice resolves.
+var _special_choice: Dictionary = {}
+
+## Seating-order indirection for Scramble/Turnabout (spec 5, Deflect) - a
+## permutation of every seat 0..num_players-1 (is_out seats stay IN it,
+## exactly like the old raw "(seat+1) % num_players" walk never removed them
+## either) plus a direction. _next_active()/_step_seat() are the only things
+## that read these; every other caller is unaffected. In the default (no
+## Scramble/Turnabout ever played) case this produces byte-for-byte the same
+## sequence as the old modulo walk - see _next_active()'s own doc comment.
+var _turn_order: Array[int] = []
+var _turn_direction: int = 1
+
+## {card, rank, suit} - Forge's "until end of round" temporary rank/suit copy,
+## reverted the instant the current bout resolves (_resolve_bout()). A card
+## can only hold one live override at a time in practice (Forge picks a fresh
+## target each time it fires, and a round always ends before the same card
+## could be forged twice) but this is a list for safety, not an assumption.
+var _forge_overrides: Array[Dictionary] = []
 
 # One-shot modifier slots a special writes into and the engine consumes once.
 # Kept generic - this is plumbing any future on-play modifier can reuse, not
@@ -200,6 +244,15 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 				actions.append({type = "refill_choice", player = seat, card = card})
 		return actions
 
+	# A mid-effect player choice (Palm/Singleout/Stack/Forge) pauses the whole
+	# table exactly like a draft pick does - see _special_choice's own doc
+	# comment. What the choice actually offers is SpecialEffects' call, not
+	# this engine's - it only knows a choice is pending and who owns it.
+	if phase == Phase.SPECIAL_CHOICE:
+		if seat == _special_choice.seat and effects != null:
+			return effects.special_choice_actions(_special_choice, self, seat)
+		return actions
+
 	if seat == defender:
 		if phase == Phase.DEFEND:
 			for slot in table.size():
@@ -207,14 +260,27 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 					for card in hands[seat]:
 						if card.beats(table[slot].attack, trump_suit) and _can_play_defense(card):
 							actions.append({type = "defend", player = seat, card = card, target = slot})
+					# Rebound (spec 5, Deflect): instead of beating this slot,
+					# send it back to whoever threw it - see _apply_rebound().
+					if _can_rebound(slot):
+						for card in hands[seat]:
+							if card.special == &"riveted_rebound":
+								actions.append({type = "rebound", player = seat, card = card, target = slot})
 			if _can_deflect():
 				var lead_rank: int = table[0].attack.rank
 				for card in hands[seat]:
-					if card.rank == lead_rank:
+					if card.rank != lead_rank and not _deflect_rank_ok(card):
+						continue
+					var landing := _deflect_landing(card)
+					if landing == seat or landing == attacker:
+						continue
+					if hands[landing].size() >= table.size() + 1:
 						actions.append({type = "deflect", player = seat, card = card})
 			# "take" only means something while a card is still unbeaten; once the
-			# defence is complete the bout just waits for the attackers to pass
-			if _unbeaten_count() > 0:
+			# defence is complete the bout just waits for the attackers to pass.
+			# Compel (spec 5, Table-shape) removes it while a full defense is
+			# still legally possible - see _can_take().
+			if _unbeaten_count() > 0 and _can_take():
 				actions.append({type = "take", player = seat})
 		return actions
 
@@ -275,14 +341,17 @@ func apply_action(action: Dictionary) -> bool:
 	if not _is_legal(action):
 		return false
 	effect_log.clear()
+	private_log.clear()
 	match action.type:
 		"attack": _apply_attack(action.player, action.card)
 		"defend": _apply_defend(action.player, action.card, action.target)
 		"deflect": _apply_deflect(action.player, action.card)
+		"rebound": _apply_rebound(action.player, action.card, action.target)
 		"take": _apply_take(action.player)
 		"pass": _apply_pass(action.player)
 		"draft_pick": _apply_draft_pick(action.player, action.card)
 		"refill_choice": _apply_refill_choice(action.player, action.get("card"))
+		"special_choice": _apply_special_choice(action)
 		_: return false
 	return true
 
@@ -296,6 +365,7 @@ func _build_and_deal() -> void:
 		reserves.append([] as Array[CardData])
 		draft_offers.append([] as Array[CardData])
 		draft_picks_used.append(0)
+		_turn_order.append(seat)
 
 	# spec 3.5: cards in circulation set the match clock (pool_size = 6/player + 12).
 	# <=4 players: the classic single 36-card deck. 5+: full 2..A ranks, and as
@@ -482,11 +552,35 @@ func _find_first_attacker() -> int:
 
 # ------------------------------------------------------------------ rules helpers
 
+## Steps through _turn_order (Scramble/Turnabout, spec 5, Deflect) by
+## _turn_direction, skipping is_out seats, until it finds a live one or has
+## walked the whole table back to after_seat (mirrors the old raw
+## "(seat+1) % num_players" walk's own fallback exactly). In the untouched
+## case (_turn_order == range(num_players), _turn_direction == 1, the state
+## every game starts in and stays in unless Scramble/Turnabout is actually
+## drafted and played) this produces byte-for-byte the same sequence as that
+## old walk - the entire rest of the engine leans on _next_active constantly,
+## so this had to stay provably identical for the common case.
 func _next_active(after_seat: int) -> int:
-	var seat := (after_seat + 1) % num_players
-	while is_out[seat] and seat != after_seat:
-		seat = (seat + 1) % num_players
-	return seat
+	var n := _turn_order.size()
+	var pos := _turn_order.find(after_seat)
+	var idx := pos
+	for _i in n:
+		idx = ((idx + _turn_direction) % n + n) % n
+		var seat: int = _turn_order[idx]
+		if not is_out[seat] or seat == after_seat:
+			return seat
+	return after_seat
+
+
+## Same walk as _next_active but without the is_out skip - one raw step in
+## turn order. Used only for building this bout's refill order (_resolve_bout),
+## which needs every seat in rotation position, is_out or not, exactly like
+## the old raw "(seat+1) % num_players" it replaces.
+func _step_seat(seat: int) -> int:
+	var n := _turn_order.size()
+	var idx := ((_turn_order.find(seat) + _turn_direction) % n + n) % n
+	return _turn_order[idx]
 
 
 func _active_count() -> int:
@@ -553,24 +647,99 @@ func _current_attack_cap() -> int:
 	return effects.attack_cap(defender, self, attack_limit)
 
 
+## Standard perevod: you can pass the whole pile on as long as every card on
+## the table is the lead rank and nothing has been beaten yet - same-rank
+## throw-ins (from anyone) don't lock it, a defence or an off-rank card does.
+## Riveted (spec 5, Deflect) vetoes it outright while it's anywhere unbeaten
+## on the table. The landing seat's own legality (enough cards, not the
+## thrower/attacker) depends on which specific card gets played - Sidestep's
+## any-rank override and Ricochet's skip-one-more landing both change per
+## card - so that part is checked by the caller, per card, via
+## _deflect_rank_ok()/_deflect_landing().
 func _can_deflect() -> bool:
-	# Standard perevod: you can pass the whole pile on as long as every card on
-	# the table is the lead rank and nothing has been beaten yet - same-rank
-	# throw-ins (from anyone) don't lock it, a defence or an off-rank card does.
-	# The off-rank check also handles a future special that lets non-matching
-	# cards be thrown in: that card makes the pile un-passable. The next player
-	# must be able to face the enlarged attack. A matching-rank card in hand is
-	# checked by the caller; Riveted (future) will veto via a query hook.
 	if phase != Phase.DEFEND or table.is_empty():
 		return false
 	var lead_rank: int = table[0].attack.rank
 	for pair in table:
-		if pair.defense != null or pair.attack.rank != lead_rank:
+		if pair.defense != null:
 			return false
-	var new_defender := _next_active(defender)
-	if new_defender == defender or new_defender == attacker:
+		if pair.attack.rank != lead_rank and not _deflect_rank_ok(pair.attack):
+			return false
+		if pair.attack.special == &"riveted_rebound":
+			return false
+	return true
+
+
+## Sidestep (spec 5, Table-shape defense half): this specific card may deflect
+## regardless of rank. Default false.
+func _deflect_rank_ok(card: CardData) -> bool:
+	if effects == null:
 		return false
-	return hands[new_defender].size() >= table.size() + 1
+	return effects.can_deflect_any_rank(card, self)
+
+
+## Ricochet (spec 5, Deflect defense half): playing this specific card as the
+## deflect skips one further seat than usual. Default: the very next seat.
+func _deflect_landing(card: CardData) -> int:
+	var landing := _next_active(defender)
+	if effects != null and effects.deflect_skips_one(card, self):
+		landing = _next_active(landing)
+	return landing
+
+
+## Compel (spec 5, Table-shape): the defender may not concede while a
+## Compel-marked attack sits unbeaten on the table AND a complete defense is
+## still legally possible (spec's own wording - a Compel attack the defender
+## genuinely can't fully answer doesn't trap them). Default true.
+func _can_take() -> bool:
+	if effects == null:
+		return true
+	return effects.can_take(self)
+
+
+## Rebound (spec 5, Deflect defense half): may `slot` be sent back to whoever
+## threw it instead of being beaten? Once per attack card (tracked on the
+## table entry itself), and only while it's still unbeaten.
+func _can_rebound(slot: int) -> bool:
+	return table[slot].defense == null and not table[slot].get("rebounded", false)
+
+
+## Simple bipartite matching (Kuhn's algorithm) - can `seat` beat every
+## currently-unbeaten attack with a distinct card from its own hand? Compel's
+## only consumer; the table is always small (attack_limit-bounded), so a
+## plain augmenting-path search is more than fast enough.
+func _can_full_defense(seat: int) -> bool:
+	var unbeaten: Array[int] = []
+	for i in table.size():
+		if table[i].defense == null:
+			unbeaten.append(i)
+	if unbeaten.is_empty():
+		return true
+	var assigned := {}  # slot -> hand index
+	for slot in unbeaten:
+		if not _try_assign_defense(seat, slot, assigned, {}):
+			return false
+	return true
+
+
+func _try_assign_defense(seat: int, slot: int, assigned: Dictionary, visited: Dictionary) -> bool:
+	var hand: Array = hands[seat]
+	for hi in hand.size():
+		if visited.has(hi):
+			continue
+		var card: CardData = hand[hi]
+		if not card.beats(table[slot].attack, trump_suit) or not _can_play_defense(card):
+			continue
+		visited[hi] = true
+		var rival_slot := -1
+		for s in assigned:
+			if assigned[s] == hi:
+				rival_slot = s
+				break
+		if rival_slot == -1 or _try_assign_defense(seat, rival_slot, assigned, visited):
+			assigned[slot] = hi
+			return true
+	return false
 
 
 # ------------------------------------------------------------------ action apply
@@ -578,13 +747,23 @@ func _can_deflect() -> bool:
 func _apply_attack(seat: int, card: CardData) -> void:
 	var ranks_before := _table_ranks()
 	hands[seat].erase(card)
-	table.append({attack = card, defense = null})
+	table.append({attack = card, defense = null, thrower = seat, rebounded = false})
 	_reopen_pass_for_new_ranks(ranks_before)
 	if phase == Phase.ATTACK:
 		phase = Phase.DEFEND
 	state_changed.emit()
 	_fire(Trigger.ON_THROW_IN, [card], {seat = seat, card = card})
-	# A throw-in can be the last possible attack (hand emptied, or table full).
+	# Palm/Singleout/Stack (spec 5) can pause here for a player choice - resumes
+	# via _apply_special_choice(then="attack_resolve"), which finishes this
+	# exact tail below on our behalf once the choice is made.
+	if phase == Phase.SPECIAL_CHOICE:
+		return
+	_resolve_after_throw_in()
+
+
+## Shared tail of _apply_attack()/_apply_special_choice(): a throw-in can be
+## the last possible attack (hand emptied, or table full).
+func _resolve_after_throw_in() -> void:
 	if phase == Phase.TAKING:
 		_maybe_resolve_taking()
 	else:
@@ -601,11 +780,29 @@ func _apply_defend(seat: int, card: CardData, target: int) -> void:
 	_maybe_resolve_defense()
 
 
+## Rebound (spec 5, Deflect): instead of beating `slot`, send its attack card
+## back to whoever threw it and spend the Rebound card itself. Simplification
+## from the spec's literal "they must now defend it" (which would need a
+## per-slot defender the engine's single `defender` field can't represent) -
+## documented in the class doc comment.
+func _apply_rebound(seat: int, card: CardData, slot: int) -> void:
+	var pair: Dictionary = table[slot]
+	var thrower: int = pair.thrower
+	hands[seat].erase(card)
+	discard.append(card)
+	hands[thrower].append(pair.attack)
+	table.remove_at(slot)
+	effect_log.append("Rebound returns a card to P%d" % thrower)
+	state_changed.emit()
+	_fire(Trigger.ON_DEFENSE_PLAYED, [card], {seat = seat, card = card, target = slot})
+	_maybe_resolve_defense()
+
+
 func _apply_deflect(seat: int, card: CardData) -> void:
 	var ranks_before := _table_ranks()
 	hands[seat].erase(card)
-	table.append({attack = card, defense = null})
-	defender = _next_active(defender)  # old defender is now just an attacker
+	table.append({attack = card, defense = null, thrower = seat, rebounded = false})
+	defender = _deflect_landing(card)  # old defender is now just an attacker
 	_set_attack_limit()                # cap now follows the new defender's hand
 	_reopen_pass_for_new_ranks(ranks_before)
 	state_changed.emit()
@@ -657,6 +854,47 @@ func _apply_refill_choice(seat: int, card: CardData) -> void:
 	_advance_refill()
 
 
+## Pauses the whole table on a mid-effect player choice (Palm/Singleout/Stack/
+## Forge) - see _special_choice's own doc comment. `then` names what to
+## resume once the choice is fully resolved: "attack_resolve"
+## (_resolve_after_throw_in, for a choice raised from _apply_attack), "none"
+## (nothing left to do, for one raised from _apply_deflect), or
+## "refill_continue" (_advance_refill, for Forge). Call this from
+## SpecialEffects.handle(), never apply the choice's effect directly there -
+## that's this class's job, once the seat actually answers.
+func _request_special_choice(seat: int, kind: String, data: Dictionary, then: String) -> void:
+	_special_choice = {seat = seat, kind = kind, then = then, resume_phase = phase}
+	for key in data:
+		_special_choice[key] = data[key]
+	phase = Phase.SPECIAL_CHOICE
+	state_changed.emit()
+
+
+## Applies one step of a pending special choice via SpecialEffects (spec 9:
+## behaviour lives there, not here) and, once SpecialEffects reports it fully
+## resolved, resumes whatever apply_* call was paused waiting on it.
+func _apply_special_choice(action: Dictionary) -> void:
+	var then: String = _special_choice.then
+	var resume_phase: int = _special_choice.resume_phase
+	var done := true
+	if effects != null:
+		done = effects.apply_special_choice(_special_choice, self, action.player, action)
+	state_changed.emit()
+	if not done:
+		return  # still mid multi-step choice (Stack's repeated picks, Forge's target-then-source)
+	var pending_fire: Dictionary = _special_choice.get("pending_fire", {})
+	_special_choice = {}
+	phase = resume_phase
+	if not pending_fire.is_empty():
+		_fire(pending_fire.trigger, pending_fire.cards, pending_fire.ctx)
+		if phase == Phase.SPECIAL_CHOICE:
+			return  # another card in the same batch also wants a choice
+	match then:
+		"attack_resolve": _resolve_after_throw_in()
+		"refill_continue": _advance_refill()
+		_: pass  # "none" (a deflect-sourced choice) - nothing left to resume
+
+
 # ------------------------------------------------------------------ bout resolution
 
 func _maybe_resolve_defense() -> void:
@@ -683,6 +921,15 @@ func _someone_may_still_attack() -> bool:
 
 
 func _resolve_bout(defender_took: bool) -> void:
+	# Forge's "until end of round" (spec 5, Sleight) - a bout resolving is the
+	# round boundary. Reverted before anything else below reads these cards,
+	# so a bout that resolves because of the forged rank/suit itself still
+	# sees the change (it mattered when it was played), but nothing after does.
+	for entry in _forge_overrides:
+		entry.card.rank = entry.rank
+		entry.card.suit = entry.suit
+	_forge_overrides.clear()
+
 	var bout_attacks: Array[CardData] = []
 	var bout_defenses: Array[CardData] = []
 	for pair in table:
@@ -723,7 +970,7 @@ func _resolve_bout(defender_took: bool) -> void:
 	for _step in num_players:
 		if not is_out[seat]:
 			_refill_pending.append(seat)
-		seat = (seat + 1) % num_players
+		seat = _step_seat(seat)
 	_refill_pending.erase(new_defender)
 	if not is_out[new_defender]:
 		_refill_pending.append(new_defender)
@@ -802,6 +1049,14 @@ func _advance_refill() -> void:
 		if not drawn.is_empty():
 			_fire(Trigger.ON_REFILL, drawn, {seat = seat, drawn = drawn})
 
+		# Forge (spec 5, Sleight) can pause here for a target/source choice -
+		# resumes via _apply_special_choice(then="refill_continue"), which
+		# re-enters this same loop (nothing above was left half-done: `seat`
+		# is still _refill_pending[0], and hands[seat].size() already reflects
+		# every card actually drawn so far).
+		if phase == Phase.SPECIAL_CHOICE:
+			return
+
 		if needs_choice:
 			_refill_choice_seat = seat
 			phase = Phase.REFILL_CHOICE
@@ -869,9 +1124,25 @@ func _last_active() -> int:
 func _fire(trigger: int, cards: Array[CardData], ctx: Dictionary) -> void:
 	if effects == null:
 		return
-	for card in cards:
-		if card.is_special():
-			effects.handle(card.special, card, trigger, self, ctx)
+	for i in cards.size():
+		var card: CardData = cards[i]
+		if not card.is_special():
+			continue
+		effects.handle(card.special, card, trigger, self, ctx)
+		if phase == Phase.SPECIAL_CHOICE:
+			# This card's effect (Palm/Singleout/Stack/Forge) paused the whole
+			# table for a choice - any remaining cards in `cards` (two Forge
+			# cards drawn in the same refill, say) haven't had their turn yet.
+			# Stash them on the pending choice itself so _apply_special_choice()
+			# can replay them once this one resolves, instead of either losing
+			# them silently or - the bug this replaced - calling handle() on
+			# them anyway while already paused, which stomped the pending
+			# choice with a second one whose resume_phase was SPECIAL_CHOICE
+			# itself (a stale phase with no matching state, i.e. a deadlock).
+			if i + 1 < cards.size():
+				_special_choice.pending_fire = {
+					trigger = trigger, cards = cards.slice(i + 1), ctx = ctx}
+			return
 
 
 ## How many cards `seat` refills to this round. Default HAND_SIZE; Light lowers

@@ -29,6 +29,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 30.0, 0.5) var throw_in_seconds := 5.0 ## auto-pass a throw-in choice left untouched this long (0 disables)
 @export_range(0.0, 60.0, 1.0) var draft_seconds := 30.0 ## auto-pick a random draft offer left untouched this long (spec 4.2; 0 disables)
 @export_range(0.0, 60.0, 1.0) var refill_choice_seconds := 8.0 ## auto-draw from the talon if a refill choice (spec 4.1) sits untouched this long (0 disables)
+@export_range(0.0, 60.0, 1.0) var special_choice_seconds := 15.0 ## auto-pick a random Palm/Singleout/Stack/Forge choice left untouched this long (0 disables) - no dedicated UI yet, see the roadmap
 
 @export_group("Card feel")
 @export_range(0.0, 160.0, 1.0) var hover_raise := 62.0 ## px a hovered hand card lifts
@@ -142,6 +143,7 @@ var _menu_open := false # the mid-game menu overlay is up; blocks board input, d
 var _throw_in_deadline := -1.0 # Time.get_ticks_msec()/1000.0 value; -1 = no throw-in timer running
 var _draft_deadline := -1.0 # same, for a pending draft offer (spec 4.2)
 var _refill_choice_deadline := -1.0 # same, for a pending refill_choice (spec 4.1)
+var _special_choice_deadline := -1.0 # same, for a pending Palm/Singleout/Stack/Forge choice
 var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
@@ -721,6 +723,14 @@ func _apply_and_animate(action: Dictionary) -> void:
 	# call, and a bot's next move could come before this one finishes animating.
 	if not game.effect_log.is_empty():
 		_flash_effect(game.effect_log.duplicate())
+	# Mirror's peeks (spec 5, Sleight) are seat-scoped, not a table-wide toast -
+	# only show the ones meant for this client's own seat.
+	var mine_to_see: Array[String] = []
+	for entry in game.private_log:
+		if entry.seat == human_seat:
+			mine_to_see.append("[peek] " + entry.text)
+	if not mine_to_see.is_empty():
+		_flash_effect(mine_to_see)
 
 	# sort every moved card into what happened to it
 	var played: Array[CardData] = []
@@ -1224,6 +1234,10 @@ func _refill_choice_actions() -> Array:
 	return _human_actions().filter(func(a): return a.type == "refill_choice")
 
 
+func _special_choice_actions() -> Array:
+	return _human_actions().filter(func(a): return a.type == "special_choice")
+
+
 ## Spec 4.2: "short timer; on expiry, a random one of the three is auto-picked
 ## (never nothing)". Random here is a client-local UI decision, not engine
 ## state - it just becomes a normal submitted action, so it doesn't need
@@ -1267,12 +1281,31 @@ func _update_refill_choice_timer() -> void:
 				return
 
 
+## No dedicated UI yet for Palm/Singleout/Stack/Forge's targeting (choosing an
+## opponent, a talon order, a source card) - see the roadmap. Auto-picking
+## random on a timeout keeps a human seat from freezing the whole table (this
+## pause blocks everyone, same as a draft pick) until real UI lands.
+func _update_special_choice_timer() -> void:
+	var choices := _special_choice_actions()
+	if special_choice_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack or choices.is_empty():
+		_special_choice_deadline = -1.0
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if _special_choice_deadline < 0.0:
+		_special_choice_deadline = now + special_choice_seconds
+		return
+	if now >= _special_choice_deadline:
+		_special_choice_deadline = -1.0
+		_submit(choices[randi() % choices.size()])
+
+
 func _process(_delta: float) -> void:
 	_update_effect_toast()
 	_update_card_tooltip()
 	_update_throw_in_timer()
 	_update_draft_timer()
 	_update_refill_choice_timer()
+	_update_special_choice_timer()
 
 	if _hand_slots.is_empty():
 		return
@@ -1815,7 +1848,7 @@ func _update_status() -> void:
 	if game.is_finished():
 		_status_label.text = ""
 		return
-	var phase_name: String = ["ATTACK", "DEFEND", "TAKING", "OVER"][game.phase]
+	var phase_name: String = ["ATTACK", "DEFEND", "TAKING", "REFILL", "CHOICE"][game.phase]
 	var trump_rank: String = CardData.RANK_NAMES.get(
 		game.trump_card.rank, str(game.trump_card.rank))
 	var role := ""

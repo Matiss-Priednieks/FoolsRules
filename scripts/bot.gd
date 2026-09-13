@@ -33,6 +33,11 @@ static func pick(game: DurakGame, excluded_seats: Array = []) -> Dictionary:
 			if choice.get("card") == null:  # always draw from the talon for now
 				return choice
 		return refill_choices[0]
+		# A pending special_choice (Palm/Singleout/Stack/Forge) blocks the whole
+		# table exactly like a draft pick does - same ambient-tier treatment.
+	var specials := actions.filter(func(action): return action.type == "special_choice")
+	if not specials.is_empty():
+		return specials[game._rng.randi_range(0, specials.size() - 1)]
 
 	# 1. Beat the attack with the cheapest card that does the job.
 	var defends := actions.filter(func(action): return action.type == "defend")
