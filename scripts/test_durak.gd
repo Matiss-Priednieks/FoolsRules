@@ -41,15 +41,17 @@ static var _reserve_draw_seen := 0
 
 ## games in which a while_held special (query-hook only, no event to log) was
 ## seen active in some hand - proves the query hook actually got exercised
-## with the card physically in play (drafted, then drawn into a hand via
-## refill), not just offered and never checked.
+## with the card physically in play (light: drafted, then drawn into a hand
+## via refill; millstone/deadweight: talon-seeded, drawn straight from the
+## talon or dealt into an opening hand - see _seed_talon_curses()), not just
+## offered/present and never checked.
 const WHILE_HELD_IDS: Array[StringName] = [&"light", &"millstone", &"deadweight"]
 static var _while_held_seen := {}   # id -> games count
 
 ## games in which an event-fired special actually logged doing something -
 ## SpecialEffects.handle() prefixes every message with the card's display
 ## name, so this is a generic "did it fire" tally, not per-card boilerplate.
-const EVENT_KEYWORDS := ["Sift", "Barbed", "Cull", "Greedy", "Last", "Muzzle"]
+const EVENT_KEYWORDS := ["Sift", "Barbed", "Cull", "Greedy", "Last", "Muzzle", "Holdout", "Tithe"]
 static var _event_seen := {}        # keyword -> games count
 
 
@@ -215,10 +217,12 @@ func _check_invariants(game: DurakGame) -> String:
 ## Targeted assertion for the reserve/draft (spec 4): a seat's lifetime picks
 ## never exceed DRAFT_ROUNDS, its reserve never exceeds RESERVE_CAP (a
 ## consequence of the pick cap, not separately enforced - worth checking that
-## it actually holds), every card ever offered or held is a real special, and
-## (user-requested revision to spec 4.5) a seat is never marked out while its
-## own reserve still has cards in it - the reserve is a personal backup talon
-## now, not something that can be hoarded past the end of the hand.
+## it actually holds), every card ever offered or held is a real special, no
+## curse (Payload) is ever offered by the draft - they're talon-seeded hazards
+## now, never a choice, boon or otherwise (see durak_game.gd's class doc
+## comment) - and (user-requested revision to spec 4.5) a seat is never marked
+## out while its own reserve still has cards in it - the reserve is a personal
+## backup talon now, not something that can be hoarded past the end of the hand.
 func _check_reserve(game: DurakGame) -> String:
 	for seat in game.num_players:
 		if game.is_out[seat] and not game.reserves[seat].is_empty():
@@ -236,6 +240,8 @@ func _check_reserve(game: DurakGame) -> String:
 		for card in game.draft_offers[seat]:
 			if not card.is_special():
 				return "seat %d was offered a non-special card" % seat
+			if card.special in DurakGame.CURSE_POOL:
+				return "seat %d was offered a curse (%s) by the draft" % [seat, card.special]
 	return ""
 
 

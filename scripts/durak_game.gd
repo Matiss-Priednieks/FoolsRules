@@ -30,9 +30,19 @@ extends RefCounted
 ## drying up (a deliberate departure from spec 4.5, user-requested) - see
 ## _generate_draft_offers()/_advance_refill()/_update_out().
 ##
+## Curses (spec 5, Payload) are a second, deliberate departure: they are never
+## drafted at all (DRAFT_POOL is boons-only) and instead seeded straight into
+## the talon at deal time as environmental hazards nobody chose - see
+## _seed_talon_curses(). A drafted curse only ever pays off when an opponent
+## concedes a pile containing it; that payoff is too rare to justify the cost
+## a curse imposes the instant it's drawn, so offering one as a pick was never
+## a real choice, just a trap. Seeding keeps them a true swap against
+## pool_size()'s count (no extra cards enter circulation, spec 3.5's clock is
+## untouched) instead of the reserve's separate, additive supply.
+##
 ## Known simplifications vs. full house rules:
 ##   - a deflect cannot bounce back onto the original attacker
-##   - the draft pool only offers ids SpecialEffects actually implements (8 of
+##   - the draft pool only offers ids SpecialEffects actually implements (10 of
 ##     17 so far) - drafting an inert card would be a dead pick; Joker is
 ##     excluded entirely, being rankless (spec 5) in an engine that can't
 ##     represent that yet
@@ -55,15 +65,19 @@ const RESERVE_CAP := 6          # spec 4.1: up to 6 specials in reserve (a conse
 const DRAFT_OFFER_SIZE := 3     # spec 4.2: one pick from three
 const DRAFT_CATCHUP_SIZE := 4   # spec 4.3: whoever holds the most cards gets a 4th option
 
-## Pool of ids SpecialEffects actually implements. Extend this the instant a
-## new card's behaviour lands - see durak_game.gd's own doc comment.
+## Pool of ids SpecialEffects actually implements, drafted deliberately. Boons
+## only (spec 4.2/4.4 as originally written did include curses; user-requested
+## revision, see the class doc comment) - Payload lives in CURSE_POOL instead.
+## Extend this the instant a new (non-curse) card's behaviour lands.
 const DRAFT_POOL: Array[StringName] = [
-	&"overwhelm_bulwark", &"light", &"millstone", &"deadweight",
-	&"sift", &"muzzle", &"barbed_cull", &"greedy_last",
+	&"overwhelm_bulwark", &"light",
+	&"sift", &"barbed_cull", &"greedy_last",
+	&"holdout", &"tithe",
 ]
-## Round 1 offers boons only (spec 4.2 - nobody has a read on the table yet).
-## Payload is the family the spec itself frames as "curses" throughout (4.4, 8.1).
-const DRAFT_CURSE_FAMILY := SpecialCards.Family.PAYLOAD
+## Payload (spec 5) - the family the spec frames as "curses" (4.4, 8.1) - is
+## seeded straight into the talon at deal time instead of drafted; see
+## _seed_talon_curses(). Not offered as a choice at all, boon or otherwise.
+const CURSE_POOL: Array[StringName] = [&"deadweight", &"millstone", &"muzzle"]
 ## Spec 4.3's suggested catch-up subset (Bulwark/Light/Cull/Sift), translated to
 ## the merged dual-mode ids that actually carry those halves now.
 const DRAFT_DEFENSIVE_IDS: Array[StringName] = [
@@ -296,6 +310,7 @@ func _build_and_deal() -> void:
 	_shuffle(deck)
 	if deck.size() > pool_size():
 		deck.resize(pool_size())
+	_seed_talon_curses()
 
 	trump_card = deck[0]
 	trump_suit = trump_card.suit
@@ -313,6 +328,26 @@ func _build_and_deal() -> void:
 ## spec 3.5: 6 per player plus a 12-card buffer.
 func pool_size() -> int:
 	return 6 * num_players + 12
+
+
+## Swaps a handful of ordinary talon cards for manufactured curses (spec 5,
+## Payload) - a true swap, not an addition, so pool_size()'s count and spec
+## 3.5's clock are untouched (see the class doc comment for why curses live
+## here instead of in the draft). Index 0 is left alone: it becomes
+## trump_card right after this runs, and a curse as the trump indicator would
+## be a purely cosmetic oddity but a needless one. One curse per two seats,
+## rounded up - occasional hazard texture, not a wall of them - each an
+## independent random pick off CURSE_POOL so duplicates can happen, same as
+## the draft already allows for boons. No-op in vanilla play (effects null).
+func _seed_talon_curses() -> void:
+	if effects == null or CURSE_POOL.is_empty() or deck.size() < 2:
+		return
+	var count: int = mini(ceili(num_players / 2.0), deck.size() - 1)
+	var slots: Array = range(1, deck.size())
+	_shuffle(slots)
+	for i in count:
+		var id: StringName = CURSE_POOL[_rng.randi_range(0, CURSE_POOL.size() - 1)]
+		deck[slots[i]] = _make_special_card(id)
 
 
 # --------------------------------------------------------------- reserve / draft
@@ -392,9 +427,7 @@ func _catchup_seat() -> int:
 
 
 func _roll_offer(seat: int, size: int) -> Array[CardData]:
-	var pool := DRAFT_POOL.duplicate()
-	if draft_picks_used[seat] == 0:  # spec 4.2: round 1 is boons only
-		pool = pool.filter(func(id): return SpecialCards.DEFS[id].family != DRAFT_CURSE_FAMILY)
+	var pool := DRAFT_POOL.duplicate()  # boons only - see the class doc comment
 	var chosen: Array[StringName] = []
 	for _i in mini(size, DRAFT_OFFER_SIZE):
 		if pool.is_empty():

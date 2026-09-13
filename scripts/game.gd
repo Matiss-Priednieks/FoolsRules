@@ -21,6 +21,8 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 1.5, 0.01) var clear_beat := 0.34 ## hold after the table clears
 @export_range(0.0, 1.5, 0.01) var refill_anim := 0.26 ## a card flying from the talon into a hand
 @export_range(0.0, 1.5, 0.01) var refill_beat := 0.14 ## hold after each seat refills
+@export_range(0.0, 2.5, 0.01) var special_move_anim := 0.85 ## a special effect visibly moving a card (Sift, Cull, ...) - deliberately slower than an ordinary play, so it doesn't blend into normal card traffic
+@export_range(0.0, 2.5, 0.01) var special_move_beat := 0.6 ## hold after a special-effect move, so the toast text and the motion land together
 @export_range(0.0, 1.0, 0.01) var deal_fly := 0.24 ## opening deal: one card's flight from the talon
 @export_range(0.0, 0.5, 0.01) var deal_gap := 0.045 ## opening deal: gap between consecutive cards
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
@@ -726,6 +728,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 	var taken: Array[CardData] = []
 	var taker := -1
 	var refilled := {} # seat -> Array[CardData]
+	var special_moved: Array[Dictionary] = []  # {card, from, to} - a special relocated a card outside the ordinary flow
 	_reserve_draws_this_action.clear()
 	var after := _snapshot()
 	for card in after:
@@ -734,15 +737,12 @@ func _apply_and_animate(action: Dictionary) -> void:
 		if was == now:
 			continue
 		var from_hand := was.begins_with("hand:")
+		var was_on_table := was == "table"
 		if now == "table" and from_hand:
 			played.append(card)
-		elif now == "discard":
-			if from_hand:
-				played.append(card)
+		elif now == "discard" and was_on_table:
 			discarded.append(card)
-		elif now.begins_with("hand:") and (was == "table" or from_hand):
-			if from_hand:
-				played.append(card)
+		elif now.begins_with("hand:") and was_on_table:
 			taken.append(card)
 			taker = now.substr(5).to_int()
 		elif now.begins_with("hand:") and (was == "talon" or was.begins_with("reserve:")):
@@ -754,6 +754,13 @@ func _apply_and_animate(action: Dictionary) -> void:
 			# reserve" instead of looking like nothing happened.
 			if was.begins_with("reserve:"):
 				_reserve_draws_this_action[card] = true
+		else:
+			# A special effect moved this card outside the ordinary play/clear/
+			# refill flow (Sift: discard -> talon; Cull: hand -> discard;
+			# Holdout: discard -> hand; Tithe/Palm: hand -> discard/hand) -
+			# flagged for its own slower, flashier animation (see
+			# _animate_special_move()) instead of blending into normal traffic.
+			special_moved.append({card = card, from = was, to = now})
 
 	# 1. the played card slides onto the table, from whoever's hand held it
 	for card in played:
@@ -794,6 +801,13 @@ func _apply_and_animate(action: Dictionary) -> void:
 				_animate_view_away(card)
 			_grow_opponent_backs(taker)
 		await _wait(clear_beat)
+		if run_id != _game_id: return
+
+	# 2.5. special effects visibly relocate a card - Sift, Cull, and future ones
+	if not special_moved.is_empty():
+		for entry in special_moved:
+			_animate_special_move(entry.card, entry.from, entry.to)
+		await _wait(special_move_beat)
 		if run_id != _game_id: return
 
 	# 3. refill from the talon, one seat at a time, in the engine's refill order
@@ -1522,6 +1536,14 @@ func _resync() -> void:
 			delay = spawned * 0.05
 			spawned += 1
 		view.z_index = entry.z
+		if view.has_method("set_trump_shimmer"):
+			view.set_trump_shimmer(entry.card.suit == game.trump_suit)
+		if view.has_method("set_special"):
+			# Refreshed every sync, not just at creation: Sift clears its own
+			# special id the first time it's picked up (special_effects.gd) so
+			# the "this card is special" band has to disappear from the same
+			# view, not just stop appearing on a future one.
+			view.set_special(entry.card.special)
 		var target_scale: Vector2 = Vector2.ONE \
 			* (float(entry.height) / maxf(view.texture.get_height(), 1.0))
 		_animate_to(view, entry.pos, entry.rotation, target_scale, move_duration, delay)
@@ -1597,6 +1619,60 @@ func _animate_view_away(card: CardData) -> void:
 	tween.tween_property(view, "scale", view.scale * 0.6, clear_anim)
 	tween.tween_property(view, "modulate:a", 0.0, clear_anim)
 	tween.chain().tween_callback(view.queue_free)
+
+
+## Screen position for a zone tag from _snapshot()/_apply_and_animate()'s diff -
+## shared by _animate_special_move() so a special's source/destination doesn't
+## need its own bespoke lookup per card.
+func _zone_pos(zone: String) -> Vector2:
+	if zone.begins_with("hand:"):
+		return _seat_layout(zone.substr(5).to_int()).origin
+	if zone.begins_with("reserve:"):
+		return _reserve_label.position
+	if zone == "discard":
+		return discard_pos
+	return talon_pos  # "talon", or "table" (rare - specials don't currently pull a card off an unresolved table)
+
+
+## A card visibly relocated by a special effect, outside the ordinary play/
+## clear/refill flow (Sift: discard -> talon; Cull: hand -> discard; future
+## Holdout/Tithe/Palm moves) - see _apply_and_animate()'s `special_moved` list.
+## Deliberately slower than a normal play (special_move_anim) with a gold
+## flash at the midpoint, so it reads as "a special did this" rather than
+## disappearing into the usual fast card traffic - the exact complaint that
+## made Sift's recycling invisible before this existed (discard/talon aren't
+## individually-tracked views, so without a dedicated flight there was nothing
+## to animate at all).
+func _animate_special_move(card: CardData, from_zone: String, to_zone: String) -> void:
+	var to_hand := to_zone.begins_with("hand:")
+	var view: Sprite2D = _card_views.get(card)
+	var ephemeral := view == null and not to_hand
+	if view == null:
+		view = _instance_card()
+		view.setup(CardData.SUIT_NAMES[card.suit], card.rank, to_hand or to_zone == "table")
+		view.set_special(card.special)
+		view.position = _zone_pos(from_zone)
+		view.scale = Vector2.ONE * (talon_card_height / maxf(view.texture.get_height(), 1.0))
+		view.z_index = 30
+		_card_layer.add_child(view)
+		if to_hand:
+			_card_views[card] = view  # keep tracking it - _resync() takes over as a normal hand card next
+	_stop_tween(view)
+	var target_scale := _fit_scale(view, hand_card_height if to_hand else talon_card_height)
+	var tween := create_tween().set_parallel(true) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.tween_property(view, "position", _zone_pos(to_zone), special_move_anim)
+	tween.tween_property(view, "scale", target_scale, special_move_anim)
+	view.set_meta("tween", tween)
+
+	var flash := create_tween()
+	flash.tween_property(view, "modulate", Color(1.6, 1.35, 0.5), special_move_anim * 0.35)
+	flash.tween_property(view, "modulate", Color.WHITE, special_move_anim * 0.65)
+
+	if ephemeral:
+		await tween.finished
+		if is_instance_valid(view):
+			view.queue_free()
 
 
 func _sync_back_stack(stack: Array, wanted: int, base: Vector2,

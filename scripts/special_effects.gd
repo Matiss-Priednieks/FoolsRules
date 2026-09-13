@@ -36,7 +36,7 @@ func handle(id: StringName, card: CardData, trigger: int, game, ctx: Dictionary)
 	match id:
 		&"sift":
 			if trigger == DurakGame.Trigger.ON_PICKUP:
-				_sift(game)
+				_sift(game, card)
 		&"muzzle":
 			if trigger == DurakGame.Trigger.ON_PICKUP:
 				_muzzle(game, ctx.seat)
@@ -52,6 +52,12 @@ func handle(id: StringName, card: CardData, trigger: int, game, ctx: Dictionary)
 				_greedy(game, ctx.seat)
 			elif trigger == DurakGame.Trigger.ON_DEFENSE_PLAYED:
 				_last(game)
+		&"holdout":
+			if trigger == DurakGame.Trigger.ON_THROW_IN:
+				_holdout(game, ctx.seat)
+		&"tithe":
+			if trigger == DurakGame.Trigger.ON_REFILL:
+				_tithe(game)
 		_:
 			pass
 
@@ -105,7 +111,14 @@ func can_play_defense(card: CardData, _game) -> bool:
 # --- Economy --------------------------------------------------------------
 # Barbed/Cull, Greedy/Last, Sift. (Light is refill_target()-only, above.)
 
-func _sift(game) -> void:
+## One-shot per physical copy: being picked up puts the card into the taker's
+## hand (not the discard), so without this it could be thrown back in and
+## picked up again indefinitely - each repeat pulling 3 more discard cards
+## into the talon and fighting spec 3.5's fixed clock every time. Firing once
+## and going ordinary (special cleared) caps a single copy's total economy
+## impact, matching the catalogue's "when picked up" as a one-time event, not
+## a standing "every time" curse like Muzzle's.
+func _sift(game, card: CardData) -> void:
 	var moved := mini(3, game.discard.size())
 	for _i in moved:
 		var idx: int = game._rng.randi_range(0, game.discard.size() - 1)
@@ -121,6 +134,7 @@ func _sift(game) -> void:
 		# a silent no-op reads as "the card didn't work" rather than "nothing to
 		# shuffle yet" - what actually happened.
 		game.effect_log.append("Sift finds nothing in the discard to shuffle")
+	card.special = &""  # spent - an ordinary card from here on, however this pickup went
 
 
 func _barbed(game, defender: int) -> void:
@@ -163,3 +177,42 @@ func _muzzle(game, seat: int) -> void:
 
 func _card_price(card: CardData, trump: int) -> int:
 	return card.rank + (100 if card.suit == trump else 0)
+
+
+# --- Sleight ----------------------------------------------------------------
+# Holdout, Tithe. (Stack/Palm/Forge/Mirror need a choice the action shape
+# doesn't carry yet - see durak_game.gd's class doc comment.)
+
+func _holdout(game, seat: int) -> void:
+	if game.discard.is_empty():
+		game.effect_log.append("Holdout finds nothing in the discard to take")
+		return
+	var idx: int = game._rng.randi_range(0, game.discard.size() - 1)
+	var card: CardData = game.discard.pop_at(idx)
+	game.hands[seat].append(card)
+	game.effect_log.append("Holdout takes a %s from the discard into P%d's hand" % [str(card), seat])
+
+
+## Opposite of Cull's "worst card" (spec 5): every active seat with a hand
+## gives up its single highest-value card (rank, trump-boosted same as
+## _card_price elsewhere). Includes the seat that just drew Tithe - "every
+## player" has no exception, so a trump-suited Tithe can tithe itself the
+## instant it lands if it's genuinely that seat's priciest card right now.
+func _tithe(game) -> void:
+	var trump: int = game.trump_suit
+	var count := 0
+	for seat in game.num_players:
+		if game.is_out[seat] or game.hands[seat].is_empty():
+			continue
+		var hand: Array = game.hands[seat]
+		var best: CardData = hand[0]
+		for c in hand:
+			if _card_price(c, trump) > _card_price(best, trump):
+				best = c
+		hand.erase(best)
+		game.discard.append(best)
+		count += 1
+	if count > 0:
+		game.effect_log.append("Tithe collects each player's highest card")
+	else:
+		game.effect_log.append("Tithe finds no hands to collect from")

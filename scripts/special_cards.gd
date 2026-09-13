@@ -49,7 +49,7 @@ const DEFS := {
 	},
 	&"sift": {
 		name = "Sift", family = Family.ECONOMY, trigger = &"on_pickup",
-		rank_hint = 7, note = "when picked up, shuffle three cards from the discard back into the talon",
+		rank_hint = 7, note = "the first time it's picked up, shuffle three cards from the discard back into the talon - then it's just a plain card",
 	},
 
 	# --- Table-shape (spec 5) -------------------------------------------

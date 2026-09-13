@@ -53,6 +53,14 @@ func set_special(id: StringName) -> void:
 		label.text = SpecialCards.DEFS[id].name
 
 
+## Toggles the gold shimmer overlay on/off - lives on the same _fx material as
+## tilt/invalid (not a separate one) since any trump-suited card can need all
+## three at once: a trump card sitting in your hand still hovers, still tilts,
+## and can still be marked unplayable, same as any other card.
+func set_trump_shimmer(enabled: bool) -> void:
+	_fx_material().set_shader_parameter("trump", 1.0 if enabled else 0.0)
+
+
 func _fx_material() -> ShaderMaterial:
 	if _fx == null:
 		_fx = ShaderMaterial.new()

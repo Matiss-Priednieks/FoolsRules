@@ -9,10 +9,15 @@ render_mode blend_mix;
 //                   rotated + perspective-divided, so the far edge really
 //                   foreshortens (a trapezoid, not a skewed parallelogram).
 //   invalid       : 0 or 1, draws the red "can't play this" diagonal strike.
+//   trump         : 0 or 1, overlays a moving gold shimmer for a trump-suited
+//                   card. An overlay, not a replacement - it screen-blends
+//                   over the sampled art, so the rank/suit stay fully legible
+//                   underneath, same idea as `invalid`'s strike.
 uniform float rot_x = 0.0;
 uniform float rot_y = 0.0;
 uniform float cam_dist : hint_range(1.5, 10.0) = 4.0; // smaller = stronger perspective
 uniform float invalid = 0.0;
+uniform float trump = 0.0;
 
 // carry the CanvasItem's modulate (game.gd dims unplayable cards via modulate.a)
 // past the fragment stage, which has no MODULATE built-in
@@ -50,6 +55,17 @@ void fragment() {
 		float d = abs(uv.x - uv.y);
 		float strike = (1.0 - smoothstep(0.03, 0.05, d)) * clamp(invalid, 0.0, 1.0);
 		tex.rgb = mix(tex.rgb, vec3(0.85, 0.05, 0.05), strike);
+
+		if (trump > 0.5) {
+			// A diagonal gold band that sweeps across the card on a loop. Screen
+			// blend (1 - (1-a)*(1-b)) only ever lightens, never darkens or hides
+			// the art underneath - band == 0 leaves tex untouched exactly.
+			float diag = fract((UV.x + UV.y) * 0.5 - TIME * 0.2);
+			float band = 1.0 - smoothstep(0.0, 0.16, abs(diag - 0.5));
+			vec3 gold = vec3(0.86, 0.65, 0.19) * band;
+			tex.rgb = 1.0 - (1.0 - tex.rgb) * (1.0 - gold);
+		}
+
 		COLOR = tex * v_modulate; // keep game.gd's dimming (modulate.a)
 	}
 }
