@@ -66,12 +66,12 @@ grow_vertical = 2
 
 [node name="MarginContainer" type="MarginContainer" parent="MainPanel" unique_id=1220690265]
 layout_mode = 2
-theme_override_constants/margin_left = 80
+theme_override_constants/margin_left = 129
 
 [node name="MainBox" type="VBoxContainer" parent="MainPanel/MarginContainer" unique_id=1065131762]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
-theme_override_constants/separation = 14
+theme_override_constants/separation = 32
 
 [node name="MainTitle" type="Label" parent="MainPanel/MarginContainer/MainBox" unique_id=1123188216]
 layout_mode = 2

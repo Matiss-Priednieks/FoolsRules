@@ -25,7 +25,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 0.5, 0.01) var deal_gap := 0.045 ## opening deal: gap between consecutive cards
 @export_range(0.0, 0.8, 0.01) var deal_player_beat := 0.10 ## opening deal: pause between one player's hand and the next
 @export_range(0.0, 30.0, 0.5) var throw_in_seconds := 5.0 ## auto-pass a throw-in choice left untouched this long (0 disables)
-@export_range(0.0, 60.0, 1.0) var draft_seconds := 8.0 ## auto-pick a random draft offer left untouched this long (spec 4.2; 0 disables)
+@export_range(0.0, 60.0, 1.0) var draft_seconds := 30.0 ## auto-pick a random draft offer left untouched this long (spec 4.2; 0 disables)
 @export_range(0.0, 60.0, 1.0) var refill_choice_seconds := 8.0 ## auto-draw from the talon if a refill choice (spec 4.1) sits untouched this long (0 disables)
 
 @export_group("Card feel")
@@ -89,6 +89,9 @@ var game: DurakGame
 @onready var _status_label: Label = $UI/Root/StatusLabel # top line: trump / phase / pile counts
 @onready var _effect_toast: Label = $UI/Root/EffectToast # "Barbed refills P2 to 7 this round" etc.
 @onready var _card_tooltip: Label = $UI/Root/CardTooltip # hover text for a special card's effect
+@onready var _draft_overlay: Control = $UI/Root/DraftOverlay # centered, dims the board - spec 4.2 pauses everyone
+@onready var _draft_title: Label = $UI/Root/DraftOverlay/Title
+@onready var _draft_countdown: Label = $UI/Root/DraftOverlay/Countdown
 @onready var _reserve_label: Label = $UI/Root/ReserveLabel # the human's own reserve (spec 4.1, owner-visible only)
 @onready var _talon_label: Label = $UI/Root/TalonLabel
 @onready var _discard_label: Label = $UI/Root/DiscardLabel
@@ -126,8 +129,10 @@ var _move_pending := false # human has laid ≥1 card this turn, not yet release
 var _awaiting_ack := false # multiplayer client: our own action is in flight to the host
 var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
-var _draft_buttons: Array[Button] = []  # rebuilt each resync - spec 4.2, ambient, 3-4 wide
+var _draft_card_views: Dictionary = {}  # CardData -> Sprite2D, the draft overlay's offered cards (rebuilt each resync)
+var _draft_buttons: Array[Button] = []  # invisible click targets over _draft_card_views, same lifetime
 var _refill_choice_buttons: Array[Button] = []  # rebuilt each resync - spec 4.1, talon + up to RESERVE_CAP wide
+var _reserve_draws_this_action: Dictionary = {}  # card -> true, cards drawn from reserve (not talon) this _apply_and_animate() - tells _view_start_pos() where to fly them in from
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
@@ -721,6 +726,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 	var taken: Array[CardData] = []
 	var taker := -1
 	var refilled := {} # seat -> Array[CardData]
+	_reserve_draws_this_action.clear()
 	var after := _snapshot()
 	for card in after:
 		var was: String = before.get(card, after[card])
@@ -739,9 +745,15 @@ func _apply_and_animate(action: Dictionary) -> void:
 				played.append(card)
 			taken.append(card)
 			taker = now.substr(5).to_int()
-		elif now.begins_with("hand:") and was == "talon":
+		elif now.begins_with("hand:") and (was == "talon" or was.begins_with("reserve:")):
 			var seat := now.substr(5).to_int()
 			refilled.get_or_add(seat, [] as Array[CardData]).append(card)
+			# A reserve draw (spec 4.1's refill_choice) moves exactly like a
+			# talon draw logically, but should visibly fly in from the reserve
+			# panel, not the talon, so it actually reads as "drawn from your
+			# reserve" instead of looking like nothing happened.
+			if was.begins_with("reserve:"):
+				_reserve_draws_this_action[card] = true
 
 	# 1. the played card slides onto the table, from whoever's hand held it
 	for card in played:
@@ -867,7 +879,7 @@ func _zone_seat(zone: String) -> int:
 
 
 func _snapshot() -> Dictionary:
-	# CardData -> zone tag: "talon" | "discard" | "table" | "hand:<seat>"
+	# CardData -> zone tag: "talon" | "discard" | "table" | "hand:<seat>" | "reserve:<seat>"
 	var zones := {}
 	for card in game.deck:
 		zones[card] = "talon"
@@ -876,6 +888,8 @@ func _snapshot() -> Dictionary:
 	for seat in game.num_players:
 		for card in game.hands[seat]:
 			zones[card] = "hand:%d" % seat
+		for card in game.reserves[seat]:
+			zones[card] = "reserve:%d" % seat
 	for pair in game.table:
 		zones[pair.attack] = "table"
 		if pair.defense != null:
@@ -911,7 +925,7 @@ func _draw_into_hand(seat: int) -> void:
 		var card: CardData = hand[i]
 		if _card_views.has(card):
 			continue
-		var view := _create_view(card) # spawns at the talon
+		var view := _create_view(card) # spawns at the talon, or the reserve panel if drawn from there
 		_card_views[card] = view
 		_animate_to(view, _hand_slot_pos(i, hand.size()), 0.0,
 			_fit_scale(view, hand_card_height), refill_anim, i * 0.04)
@@ -1028,7 +1042,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"): # Esc toggles the mid-game menu
 		_close_menu() if _menu_open else _open_menu()
 		return
-	if _menu_open or not _waiting_for_human or _awaiting_ack:
+	if _board_blocked() or not _waiting_for_human or _awaiting_ack:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -1127,20 +1141,23 @@ func _update_card_tooltip() -> void:
 		return
 	if not _menu_open:
 		var mouse := get_global_mouse_position()
-		for card in _card_views:
-			var view: Sprite2D = _card_views[card]
-			if not is_instance_valid(view) or view.texture == null or not view.visible:
-				continue
-			if not card.is_special() or not SpecialCards.exists(card.special):
-				continue
-			if _view_rect(view).has_point(mouse):
-				_card_tooltip.text = SpecialCards.tooltip_text(card.special)
-				var pos := mouse + Vector2(20, 24)
-				pos.x = minf(pos.x, 1920.0 - _card_tooltip.custom_minimum_size.x - 20.0)
-				pos.y = minf(pos.y, 1080.0 - 60.0)
-				_card_tooltip.position = pos
-				_card_tooltip.visible = true
-				return
+		# _draft_card_views second: the draft overlay sits on top of everything
+		# else when it's up, so its cards should win the hover check first.
+		for views in [_draft_card_views, _card_views]:
+			for card in views:
+				var view: Sprite2D = views[card]
+				if not is_instance_valid(view) or view.texture == null or not view.visible:
+					continue
+				if not card.is_special() or not SpecialCards.exists(card.special):
+					continue
+				if _view_rect(view).has_point(mouse):
+					_card_tooltip.text = SpecialCards.tooltip_text(card.special)
+					var pos := mouse + Vector2(20, 24)
+					pos.x = minf(pos.x, 1920.0 - _card_tooltip.custom_minimum_size.x - 20.0)
+					pos.y = minf(pos.y, 1080.0 - 60.0)
+					_card_tooltip.position = pos
+					_card_tooltip.visible = true
+					return
 	_card_tooltip.visible = false
 
 
@@ -1201,12 +1218,17 @@ func _update_draft_timer() -> void:
 	var offers := _draft_pick_actions()
 	if draft_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack or offers.is_empty():
 		_draft_deadline = -1.0
+		if _draft_countdown != null:
+			_draft_countdown.text = ""
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	if _draft_deadline < 0.0:
 		_draft_deadline = now + draft_seconds
-		return
-	if now >= _draft_deadline:
+
+	var remaining := _draft_deadline - now
+	if _draft_countdown != null:
+		_draft_countdown.text = "auto-picks in %d..." % ceili(maxf(remaining, 0.0))
+	if remaining <= 0.0:
 		_draft_deadline = -1.0
 		_submit(offers[randi() % offers.size()])
 
@@ -1258,7 +1280,7 @@ func _process(_delta: float) -> void:
 		return
 
 	# hover / raise only when the human can actually act; the fan still settles below
-	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack and not _menu_open
+	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack and not _board_blocked()
 	_hovered_view = null
 	if interactive:
 		for i in range(_hand_slots.size() - 1, -1, -1):
@@ -1316,6 +1338,13 @@ func _view_rect(view: Node2D) -> Rect2:
 
 
 # ---------------------------------------------------------------- layout
+
+## True while board interaction should be suppressed for a reason other than
+## an animation in flight (_busy) - the mid-game menu, or the draft overlay
+## (spec 4.2 pauses everyone until the round's picks are all in).
+func _board_blocked() -> bool:
+	return _menu_open or (_draft_overlay != null and _draft_overlay.visible)
+
 
 func _near_seat() -> int:
 	return human_seat if human_seat >= 0 else 0
@@ -1540,6 +1569,8 @@ func _view_start_pos(card: CardData) -> Vector2:
 			return _seat_layout(game.attacker).origin
 		if game.table[i].defense == card:
 			return _seat_layout(game.defender).origin
+	if _reserve_draws_this_action.has(card):
+		return _reserve_label.position
 	return talon_pos
 
 
@@ -1735,10 +1766,16 @@ func _update_buttons() -> void:
 	_deflect_strip.visible = offered.call("deflect")
 
 
-## Reserve panel (spec 4.1, owner-visible only) + the two ambient decision rows
-## it feeds: draft picks (spec 4.2) and the talon-vs-reserve refill choice
-## (spec 4.1). Dev-quality plain buttons, same spirit as the rest of this
-## layer's placeholder visuals - a real draft screen/reserve tray is later work.
+const DRAFT_CARD_HEIGHT := 240.0  ## the draft overlay's offered cards are shown full-size, hoverable/clickable
+const DRAFT_CARD_SPACING := 200.0
+
+## Reserve panel + refill-choice row sit beside the human's own hand (spec
+## 4.1, owner-visible only), still plain buttons. The draft row is different
+## in kind, not just position: spec 4.2 pauses the *whole table* until every
+## offer this round is claimed, so it's the centered, dimmed DraftOverlay -
+## and its offers are shown as real card sprites (not buttons), reusing
+## card.gd's own special-name band and _update_card_tooltip()'s hover, so a
+## draft pick looks and inspects exactly like any other special in play.
 func _update_reserve_ui() -> void:
 	_reserve_label.visible = human_seat >= 0 and game != null
 	if _reserve_label.visible:
@@ -1747,17 +1784,61 @@ func _update_reserve_ui() -> void:
 			names.append(SpecialCards.DEFS[card.special].name)
 		_reserve_label.text = "Reserve: %s" % (", ".join(names) if not names.is_empty() else "(empty)")
 
-	_draft_buttons = _rebuild_choice_row(_draft_buttons, _draft_pick_actions(), Vector2(24, 78),
-		func(a: Dictionary) -> String:
-			return "Draft: %s %s" % [SpecialCards.DEFS[a.card.special].name, str(a.card)])
-	_refill_choice_buttons = _rebuild_choice_row(
-		_refill_choice_buttons, _refill_choice_actions(), Vector2(24, 78 + _draft_buttons.size() * 34 + 10),
+	# The overlay stays up for the *whole table's* draft pause (spec 4.2:
+	# paused until everyone's chosen), not just while this seat's own pick is
+	# outstanding - otherwise it'd vanish for you the moment you pick, even
+	# though the game is still waiting on other players.
+	var draft_actions := _draft_pick_actions()
+	_draft_overlay.visible = game._draft_pause_active()
+	_draft_title.text = "Waiting for other players..." if draft_actions.is_empty() else "Draft - pick one"
+	_rebuild_draft_cards(draft_actions)
+
+	_refill_choice_buttons = _rebuild_choice_row(_ui_root, _refill_choice_buttons,
+		_refill_choice_actions(), Vector2(24, 826), 280.0, 34.0,
 		func(a: Dictionary) -> String:
 			return "Refill: Talon" if a.get("card") == null \
 				else "Refill: %s %s" % [SpecialCards.DEFS[a.card.special].name, str(a.card)])
 
 
-func _rebuild_choice_row(pool: Array[Button], actions: Array, origin: Vector2, label_of: Callable) -> Array[Button]:
+## Rebuilds the draft overlay's offered cards from scratch every call (there
+## are never more than 4, so this is cheap): a real card sprite per offer, for
+## the tooltip hover and the name band, plus an invisible click target the
+## same size laid on top of it, since Sprite2D has no click signal of its own.
+func _rebuild_draft_cards(actions: Array) -> void:
+	for view in _draft_card_views.values():
+		view.queue_free()
+	_draft_card_views.clear()
+	for b in _draft_buttons:
+		b.queue_free()
+	_draft_buttons.clear()
+
+	var start_x := 960.0 - float(actions.size() - 1) * DRAFT_CARD_SPACING * 0.5
+	for i in actions.size():
+		var action: Dictionary = actions[i]
+		var card: CardData = action.card
+		var center := Vector2(start_x + i * DRAFT_CARD_SPACING, 520)
+
+		var view := _instance_card()
+		view.setup(CardData.SUIT_NAMES[card.suit], card.rank, true)
+		view.set_special(card.special)
+		view.scale = Vector2.ONE * (DRAFT_CARD_HEIGHT / maxf(view.texture.get_height(), 1.0))
+		view.position = center
+		_draft_overlay.add_child(view)
+		_draft_card_views[card] = view
+
+		var hit_size: Vector2 = view.texture.get_size() * view.scale
+		var hit := Button.new()
+		hit.flat = true
+		hit.modulate = Color(1, 1, 1, 0)  # invisible - the card sprite underneath is the visual
+		hit.custom_minimum_size = hit_size
+		hit.position = center - hit_size * 0.5
+		hit.pressed.connect(func(): _submit(action))
+		_draft_overlay.add_child(hit)
+		_draft_buttons.append(hit)
+
+
+func _rebuild_choice_row(parent: Control, pool: Array[Button], actions: Array,
+origin: Vector2, width: float, row_height: float, label_of: Callable) -> Array[Button]:
 	for b in pool:
 		b.queue_free()
 	var new_pool: Array[Button] = []
@@ -1765,10 +1846,10 @@ func _rebuild_choice_row(pool: Array[Button], actions: Array, origin: Vector2, l
 		var action: Dictionary = actions[i]
 		var b := Button.new()
 		b.text = label_of.call(action)
-		b.position = origin + Vector2(0, i * 34)
-		b.custom_minimum_size = Vector2(280, 30)
+		b.position = origin + Vector2(0, i * row_height)
+		b.custom_minimum_size = Vector2(width, row_height - 4.0)
 		b.pressed.connect(func(): _submit(action))
-		_ui_root.add_child(b)
+		parent.add_child(b)
 		new_pool.append(b)
 	return new_pool
 

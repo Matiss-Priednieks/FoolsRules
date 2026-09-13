@@ -144,9 +144,9 @@ autowrap_mode = 2
 [node name="ReserveLabel" type="Label" parent="UI/Root" unique_id=700000012]
 layout_mode = 0
 offset_left = 24.0
-offset_top = 48.0
-offset_right = 700.0
-offset_bottom = 74.0
+offset_top = 792.0
+offset_right = 500.0
+offset_bottom = 818.0
 theme_override_colors/font_color = Color(0.7, 0.85, 1, 1)
 theme_override_font_sizes/font_size = 18
 
@@ -321,6 +321,43 @@ offset_bottom = 700.0
 focus_mode = 0
 theme_override_font_sizes/font_size = 26
 text = "Main Menu"
+
+[node name="DraftOverlay" type="Control" parent="UI/Root" unique_id=700000013]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Dim" type="ColorRect" parent="UI/Root/DraftOverlay" unique_id=700000014]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Title" type="Label" parent="UI/Root/DraftOverlay" unique_id=700000015]
+layout_mode = 0
+offset_top = 260.0
+offset_right = 1920.0
+offset_bottom = 316.0
+theme_override_font_sizes/font_size = 36
+text = "Draft - pick one"
+horizontal_alignment = 1
+
+[node name="Countdown" type="Label" parent="UI/Root/DraftOverlay" unique_id=700000016]
+layout_mode = 0
+offset_top = 320.0
+offset_right = 1920.0
+offset_bottom = 350.0
+theme_override_colors/font_color = Color(1, 0.83, 0.2, 1)
+theme_override_font_sizes/font_size = 20
+horizontal_alignment = 1
 
 [node name="EndScreen" type="ColorRect" parent="UI/Root" unique_id=1994760652]
 visible = false

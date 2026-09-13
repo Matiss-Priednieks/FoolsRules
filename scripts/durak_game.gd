@@ -132,6 +132,16 @@ var _refill_pending: Array[int] = []  # seats still to refill this bout, in orde
 var _refill_choice_seat: int = -1     # seat currently offered a refill_choice, -1 = none
 var _pending_attacker: int = -1       # staged attacker for the bout about to start, once refills finish
 
+## Spec 4.2's draft happens once per "round" - resolved as once per full lap
+## of the attacker rotation, not once per bout (user-requested: otherwise it'd
+## fire on every single bout, which is far too often). "Attacker" doesn't
+## rotate cleanly seat-by-seat though - a defender who beats everything leads
+## the very next bout too - so a lap is tracked as "every still-drafting active
+## seat has led at least one bout since the last round", not "the rotation
+## reached back to a specific seat" (which could refire every single bout if
+## one seat keeps winning and re-leading, without a lap actually happening).
+var _cycle_seen_attackers: Dictionary = {}  # seat -> true, cleared each time a round fires
+
 ## Set to a SpecialEffects instance to switch the roguelike layer on. null =
 ## pure vanilla: _fire() is a no-op and the query hooks return plain values.
 ## Passed into _init(), not assigned after, because specials are physically
@@ -157,10 +167,14 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 	if phase == Phase.GAME_OVER or is_out[seat]:
 		return actions
 
-	# Draft picks (spec 4.2) are ambient - available whenever offered, on top of
-	# whatever else this seat can currently do, not a phase of their own.
-	for card in draft_offers[seat]:
-		actions.append({type = "draft_pick", player = seat, card = card})
+	# Draft picks (spec 4.2: "simultaneous, all players at once") pause
+	# everything else the instant any seat has a pending offer - the whole
+	# table is blocked on the draft resolving, not just the offered seats,
+	# until every offer from this round is claimed.
+	if _draft_pause_active():
+		for card in draft_offers[seat]:
+			actions.append({type = "draft_pick", player = seat, card = card})
+		return actions
 
 	if phase == Phase.REFILL_CHOICE:
 		if seat == _refill_choice_seat:
@@ -290,7 +304,7 @@ func _build_and_deal() -> void:
 	attacker = _find_first_attacker()
 	defender = _next_active(attacker)
 	_set_attack_limit()
-	_generate_draft_offers()  # spec 4.2: round 1's offers
+	_generate_draft_offers()  # spec 4.2: round 1's offers fire immediately, no lap to wait for yet
 
 
 ## spec 3.5: 6 per player plus a 12-card buffer.
@@ -300,10 +314,41 @@ func pool_size() -> int:
 
 # --------------------------------------------------------------- reserve / draft
 
-## Spec 4.2: at the start of a round (each bout, up to DRAFT_ROUNDS of them per
-## seat), every active seat still drafting is shown fresh specials and picks
-## one via a "draft_pick" action - see get_legal_actions()/_apply_draft_pick().
-## No-op entirely while effects is null (vanilla).
+## True while any seat has a draft offer it hasn't picked from yet - spec
+## 4.2's "simultaneous, all players at once" is enforced by get_legal_actions()
+## refusing everything except draft_pick, for everyone, while this holds.
+func _draft_pause_active() -> bool:
+	for seat in num_players:
+		# An is_out seat's own get_legal_actions() short-circuits to empty
+		# before it ever reaches its draft_offers - so a stray offer left on an
+		# eliminated seat (should be cleared by _update_out(), but be defensive)
+		# would otherwise be permanently unclaimable, deadlocking every other
+		# seat forever since this would never stop seeing it as pending.
+		if not is_out[seat] and not draft_offers[seat].is_empty():
+			return true
+	return false
+
+
+## Fires _generate_draft_offers() once a full lap has elapsed: every active,
+## still-drafting seat has led at least one bout since the last round (see
+## _cycle_seen_attackers' own doc comment for why "the same seat leads again"
+## isn't the right signal). Call for every bout after the opening deal.
+func _maybe_generate_draft_offers(current_attacker: int) -> void:
+	_cycle_seen_attackers[current_attacker] = true
+	for seat in num_players:
+		if is_out[seat] or draft_picks_used[seat] >= DRAFT_ROUNDS:
+			continue
+		if not _cycle_seen_attackers.has(seat):
+			return  # still waiting on this seat to lead a bout this lap
+	_cycle_seen_attackers.clear()
+	_generate_draft_offers()
+
+
+## Every active seat still drafting (up to DRAFT_ROUNDS picks) is shown fresh
+## specials and picks one via a "draft_pick" action - see
+## get_legal_actions()/_apply_draft_pick(). No-op entirely while effects is
+## null (vanilla). Call via _maybe_generate_draft_offers(), not directly -
+## this itself doesn't gate on the once-per-round cadence.
 func _generate_draft_offers() -> void:
 	if effects == null:
 		return
@@ -622,8 +667,9 @@ func _resolve_bout(defender_took: bool) -> void:
 	_throw_in_locked_next = {}
 
 	# Spec 4.2/4.3: offered before refill, while "holding the most cards" is
-	# most meaningful (refill normalizes everyone back toward target).
-	_generate_draft_offers()
+	# most meaningful (refill normalizes everyone back toward target) - and
+	# only once per full lap of the attacker rotation (_maybe_...'s own doc).
+	_maybe_generate_draft_offers(_pending_attacker)
 
 	# Refill order: the bout that's about to start's attacker first, its
 	# defender last (spec 2) - not the bout that just ended's. is_out won't
@@ -732,6 +778,11 @@ func _update_out() -> void:
 		if not is_out[seat] and hands[seat].is_empty():
 			is_out[seat] = true
 			finish_order.append(seat)
+			# An eliminated seat can never claim a pending draft offer again
+			# (is_out short-circuits its own get_legal_actions() to empty) -
+			# drop it so it can't linger as a phantom "still pending" that
+			# would otherwise block the draft pause from ever clearing.
+			draft_offers[seat] = []
 
 
 func _last_active() -> int:
