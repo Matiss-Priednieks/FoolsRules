@@ -40,6 +40,8 @@ var _toast_until := 0.0
 var _current_invite_code := ""
 var _host_seats := 4                  ## seat count the host will create the lobby with
 var _seat_value_label: Label = null
+var _singleplayer_seats := 4          ## seat count for a singleplayer game (the rest fill with bots)
+var _sp_seat_value_label: Label = null
 
 
 ## No-Steam local test transport: run one instance with `-- --lan-host` and a
@@ -70,6 +72,7 @@ func _ready() -> void:
 		_multiplayer_button.text = "Multiplayer  (Steam not running)"
 
 	_build_seat_stepper()
+	_build_singleplayer_stepper()
 	_host_button.pressed.connect(func(): SteamLobby.host(_list_publicly_check.button_pressed, _host_seats))
 	_join_by_code_button.pressed.connect(func(): SteamLobby.join_by_code(_code_field.text))
 	_refresh_button.pressed.connect(SteamLobby.refresh_browse)
@@ -120,36 +123,42 @@ func _open_browse() -> void:
 
 # --- host seat count ------------------------------------------------
 
-## A small "- N +" stepper built in code and slotted above Host Game, so the
-## host picks the table size (2..DurakGame.MAX_PLAYERS) before creating a lobby.
-## Kept procedural to leave menu.tscn (theme WIP) untouched.
-func _build_seat_stepper() -> void:
+## A small "- N +" stepper built in code and slotted right above `anchor`, in
+## `anchor`'s own parent container. Kept procedural to leave menu.tscn (theme
+## WIP) untouched. Returns the value label so the caller keeps its text in sync.
+func _build_stepper(anchor: Control, caption_text: String, on_change: Callable) -> Label:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	var caption := Label.new()
-	caption.text = "Players:"
+	caption.text = caption_text
 	row.add_child(caption)
 
 	var minus := Button.new()
 	minus.text = "  −  "
-	minus.pressed.connect(func(): _nudge_seats(-1))
+	minus.pressed.connect(on_change.bind(-1))
 	row.add_child(minus)
 
-	_seat_value_label = Label.new()
-	_seat_value_label.custom_minimum_size = Vector2(40, 0)
-	_seat_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	row.add_child(_seat_value_label)
+	var value_label := Label.new()
+	value_label.custom_minimum_size = Vector2(40, 0)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	row.add_child(value_label)
 
 	var plus := Button.new()
 	plus.text = "  +  "
-	plus.pressed.connect(func(): _nudge_seats(1))
+	plus.pressed.connect(on_change.bind(1))
 	row.add_child(plus)
 
-	var box := _host_button.get_parent()
+	var box := anchor.get_parent()
 	box.add_child(row)
-	box.move_child(row, _host_button.get_index())
+	box.move_child(row, anchor.get_index())
+	return value_label
+
+
+## The host picks the table size (2..DurakGame.MAX_PLAYERS) before creating a lobby.
+func _build_seat_stepper() -> void:
+	_seat_value_label = _build_stepper(_host_button, "Players:", _nudge_seats)
 	_update_seat_label()
 
 
@@ -161,6 +170,24 @@ func _nudge_seats(delta: int) -> void:
 func _update_seat_label() -> void:
 	if _seat_value_label != null:
 		_seat_value_label.text = str(_host_seats)
+
+
+## Same idea as the host's seat stepper, for singleplayer - the rest of the
+## table fills with bots (see DurakGame's reserve/draft doc comment; bots are
+## always ordinary seats, not a separate concept).
+func _build_singleplayer_stepper() -> void:
+	_sp_seat_value_label = _build_stepper(_singleplayer_button, "Players:", _nudge_singleplayer_seats)
+	_update_singleplayer_seat_label()
+
+
+func _nudge_singleplayer_seats(delta: int) -> void:
+	_singleplayer_seats = clampi(_singleplayer_seats + delta, 2, DurakGame.MAX_PLAYERS)
+	_update_singleplayer_seat_label()
+
+
+func _update_singleplayer_seat_label() -> void:
+	if _sp_seat_value_label != null:
+		_sp_seat_value_label.text = str(_singleplayer_seats)
 
 
 # --- dynamic content ---------------------------------------------------
@@ -252,7 +279,7 @@ func _copy_code(code: String) -> void:
 
 
 func _start_singleplayer() -> void:
-	NetSession.configure_singleplayer()
+	NetSession.configure_singleplayer(_singleplayer_seats)
 	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
 

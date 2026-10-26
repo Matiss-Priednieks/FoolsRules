@@ -30,10 +30,10 @@ func _reset(players: int) -> void:
 		seat_peer_id.append(0)
 
 
-func configure_singleplayer() -> void:
+func configure_singleplayer(players: int = 4) -> void:
 	active = false
 	seed = 0
-	_reset(4)
+	_reset(players)
 	local_seat = 0
 	seat_is_bot[0] = false
 	player_names[0] = "You"
@@ -60,7 +60,7 @@ func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id:
 func configure_lan_test(seat: int) -> void:
 	active = true
 	seed = 918273645 # fixed - both sides just need to match, not be unpredictable
-	_reset(4)
+	_reset(2)
 	local_seat = seat
 	seat_is_bot[0] = false
 	seat_is_bot[1] = false

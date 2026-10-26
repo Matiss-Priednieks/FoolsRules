@@ -11,7 +11,7 @@ output_port_for_preview = 0
 operator = 5
 
 [sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_4injy"]
-default_input_values = [0, 0.0, 1, 1.0]
+default_input_values = [0, 0.0, 1, 2.0]
 operator = 2
 
 [sub_resource type="VisualShaderNodeFloatFunc" id="VisualShaderNodeFloatFunc_joc8w"]
@@ -24,6 +24,7 @@ output_port_for_preview = 0
 [sub_resource type="VisualShaderNodeColorOp" id="VisualShaderNodeColorOp_bqamh"]
 output_port_for_preview = 0
 default_input_values = [0, Vector3(0, 0, 0), 1, Vector3(0.625, 0.5, 0)]
+operator = 8
 
 [sub_resource type="Gradient" id="Gradient_73oy0"]
 offsets = PackedFloat32Array(0, 0.5135135, 1)

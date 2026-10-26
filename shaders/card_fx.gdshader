@@ -57,13 +57,23 @@ void fragment() {
 		tex.rgb = mix(tex.rgb, vec3(0.85, 0.05, 0.05), strike);
 
 		if (trump > 0.5) {
-			// A diagonal gold band that sweeps across the card on a loop. Screen
-			// blend (1 - (1-a)*(1-b)) only ever lightens, never darkens or hides
-			// the art underneath - band == 0 leaves tex untouched exactly.
-			float diag = fract((UV.x + UV.y) * 0.5 - TIME * 0.2);
-			float band = 1.0 - smoothstep(0.0, 0.16, abs(diag - 0.5));
-			vec3 gold = vec3(0.86, 0.65, 0.19) * band;
-			tex.rgb = 1.0 - (1.0 - tex.rgb) * (1.0 - gold);
+			// A direct tint (not a screen blend - the card art is mostly a white
+			// background, and screen blending onto white does nothing, since
+			// white is already maximally bright; that's why the first two passes
+			// at this were invisible) mixed on top at a controlled strength, so
+			// it reads on both the white face and the black pips.
+			vec3 gold = vec3(1.0, 0.82, 0.25);
+
+			// A persistent gold frame so a trump card reads as trump at a glance,
+			// not just while the sweep happens to be passing over it.
+			float edge_dist = min(min(UV.x, 1.0 - UV.x), min(UV.y, 1.0 - UV.y));
+			float edge = 1.0 - smoothstep(0.0, 0.07, edge_dist);
+			tex.rgb = mix(tex.rgb, gold, edge * 0.85);
+
+			// A wide, bright diagonal band that sweeps across the card on a loop.
+			float diag = fract((UV.x + UV.y) * 0.5 - TIME * 0.25);
+			float band = 1.0 - smoothstep(0.0, 0.35, abs(diag - 0.5));
+			tex.rgb = mix(tex.rgb, gold, band * 0.55);
 		}
 
 		COLOR = tex * v_modulate; // keep game.gd's dimming (modulate.a)

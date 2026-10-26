@@ -190,6 +190,14 @@ var reserve_cards_created := 0        # running count - total_card_count()'s con
 # able to pause mid-refill for a decision, unlike the single synchronous pass
 # vanilla refill used to be). See _resolve_bout()/_advance_refill().
 var _refill_pending: Array[int] = []  # seats still to refill this bout, in order
+
+## A copy of _refill_pending's order at the moment it was built for the bout
+## that just resolved, kept around (not drained) purely so the view can
+## sequence its refill *animation* in the same order the engine actually
+## refilled in - not read by anything in this class. Re-derives seating order
+## with raw "(seat+1) % num_players" arithmetic instead of _step_seat() would
+## get it wrong once Scramble/Turnabout have touched _turn_order/_turn_direction.
+var last_refill_order: Array[int] = []
 var _refill_choice_seat: int = -1     # seat currently offered a refill_choice, -1 = none
 var _pending_attacker: int = -1       # staged attacker for the bout about to start, once refills finish
 
@@ -986,6 +994,7 @@ func _resolve_bout(defender_took: bool) -> void:
 		_refill_pending.push_back(_refill_last_seat)
 	_refill_priority_seat = -1
 	_refill_last_seat = -1
+	last_refill_order = _refill_pending.duplicate() # for the view only - see its own doc comment
 
 	_advance_refill()
 

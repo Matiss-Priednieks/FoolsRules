@@ -132,10 +132,11 @@ var _move_pending := false # human has laid ≥1 card this turn, not yet release
 var _awaiting_ack := false # multiplayer client: our own action is in flight to the host
 var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, playable}]
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
-var _draft_card_views: Dictionary = {}  # CardData -> Sprite2D, the draft overlay's offered cards (rebuilt each resync)
-var _draft_buttons: Array[Button] = []  # invisible click targets over _draft_card_views, same lifetime
-var _refill_choice_buttons: Array[Button] = []  # rebuilt each resync - spec 4.1, talon + up to RESERVE_CAP wide
-var _reserve_draws_this_action: Dictionary = {}  # card -> true, cards drawn from reserve (not talon) this _apply_and_animate() - tells _view_start_pos() where to fly them in from
+var _draft_card_views: Dictionary = {} # CardData -> Sprite2D, the draft overlay's offered cards (rebuilt each resync)
+var _ephemeral_views: Dictionary = {} # Sprite2D -> true, an in-flight _animate_special_move() view not otherwise tracked
+var _draft_buttons: Array[Button] = [] # invisible click targets over _draft_card_views, same lifetime
+var _refill_choice_buttons: Array[Button] = [] # rebuilt each resync - spec 4.1, talon + up to RESERVE_CAP wide
+var _reserve_draws_this_action: Dictionary = {} # card -> true, cards drawn from reserve (not talon) this _apply_and_animate() - tells _view_start_pos() where to fly them in from
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
 var _headless := false
@@ -246,7 +247,10 @@ func _new_game() -> void:
 	# In multiplayer every peer must deal identically without transmitting the
 	# deal itself, so they all build the same DurakGame from the same seed.
 	var game_seed := NetSession.seed if NetSession.active else 0
-	var players := NetSession.num_players if NetSession.active else 4
+	# NetSession.num_players is always meaningfully set now, singleplayer
+	# included (configure_singleplayer() takes the table size the menu's
+	# stepper picked) - not just for networked games.
+	var players := NetSession.num_players
 	# SpecialEffects is stateless (all randomness goes through game._rng), so a
 	# fresh instance per peer stays sync-safe under the same seed.
 	game = DurakGame.new(players, game_seed, SpecialEffects.new())
@@ -256,11 +260,18 @@ func _new_game() -> void:
 
 
 ## Counter-clockwise seat order (left -> top -> right -> home in screen terms),
-## so the human's own hand fills last.
+## so the human's own hand fills last. Was hardcoded to the relative offsets
+## [1, 2, 3, 0], which only ever produces 4 distinct seats - for any other
+## player count the modulo wrapped two offsets onto the same seat (2 players:
+## offsets 0 and 2 collide, so do 1 and 3), dealing that seat's whole hand
+## twice and orphaning the first set of views. Generalized to every opponent
+## in order, then the human last, which reduces to the exact same [1,2,3,0]
+## sequence at 4 players.
 func _deal_order() -> Array[int]:
 	var order: Array[int] = []
-	for relative in [1, 2, 3, 0]:
+	for relative in range(1, game.num_players):
 		order.append((_near_seat() + relative) % game.num_players)
+	order.append(_near_seat())
 	return order
 
 
@@ -387,6 +398,20 @@ func _on_game_over(loser: int) -> void:
 	_show_end_screen(loser)
 
 
+## "1st"/"2nd"/"3rd"/"4th".."24th" - was a fixed 4-entry lookup table that
+## indexed out of bounds (a runtime error) for any finish place at or past
+## 5th, reachable in any 5+ player game (the menu allows up to
+## DurakGame.MAX_PLAYERS = 24).
+func _ordinal(n: int) -> String:
+	if n % 100 in [11, 12, 13]:
+		return "%dth" % n
+	match n % 10:
+		1: return "%dst" % n
+		2: return "%dnd" % n
+		3: return "%drd" % n
+		_: return "%dth" % n
+
+
 func _show_end_screen(loser: int) -> void:
 	var shown_for := _game_id
 	await get_tree().create_timer(0.55).timeout
@@ -398,7 +423,7 @@ func _show_end_screen(loser: int) -> void:
 		_end_title.text = "You are the durak"
 	elif human_seat >= 0:
 		var place := game.finish_order.find(human_seat)
-		_end_title.text = "You got out %s" % ["1st", "2nd", "3rd", "4th"][maxi(place, 0)]
+		_end_title.text = "You got out %s" % _ordinal(maxi(place, 0) + 1)
 	else:
 		_end_title.text = "%s is the durak" % _display_name(loser)
 	var rows: Array[String] = []
@@ -715,8 +740,6 @@ func _apply_and_animate(action: Dictionary) -> void:
 	_busy = true
 	_waiting_for_human = false
 	var before := _snapshot()
-	var bout_attacker: int = game.attacker
-	var bout_defender: int = game.defender
 
 	game.apply_action(action)
 	# Captured immediately - apply_action() clears effect_log at its own next
@@ -738,7 +761,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 	var taken: Array[CardData] = []
 	var taker := -1
 	var refilled := {} # seat -> Array[CardData]
-	var special_moved: Array[Dictionary] = []  # {card, from, to} - a special relocated a card outside the ordinary flow
+	var special_moved: Array[Dictionary] = [] # {card, from, to} - a special relocated a card outside the ordinary flow
 	_reserve_draws_this_action.clear()
 	var after := _snapshot()
 	for card in after:
@@ -822,7 +845,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 
 	# 3. refill from the talon, one seat at a time, in the engine's refill order
 	if not refilled.is_empty():
-		for seat in _refill_order(bout_attacker, bout_defender):
+		for seat in _refill_order():
 			if not refilled.has(seat):
 				continue
 			if seat == human_seat:
@@ -921,16 +944,12 @@ func _snapshot() -> Dictionary:
 	return zones
 
 
-func _refill_order(first_attacker: int, bout_defender: int) -> Array[int]:
-	# mirrors DurakGame._refill: attacker, then clockwise, defender last
-	var order: Array[int] = []
-	var seat := first_attacker
-	for _step in game.num_players:
-		order.append(seat)
-		seat = (seat + 1) % game.num_players
-	order.erase(bout_defender)
-	order.append(bout_defender)
-	return order
+## The exact order the engine just refilled seats in - not re-derived here,
+## since a raw "(seat+1) % num_players" walk gets it wrong once Scramble/
+## Turnabout have touched the engine's seating indirection (_turn_order/
+## _turn_direction). See DurakGame.last_refill_order's own doc comment.
+func _refill_order() -> Array[int]:
+	return game.last_refill_order
 
 
 func _table_target_for(card: CardData) -> Dictionary:
@@ -1180,6 +1199,7 @@ func _update_card_tooltip() -> void:
 					pos.x = minf(pos.x, 1920.0 - _card_tooltip.custom_minimum_size.x - 20.0)
 					pos.y = minf(pos.y, 1080.0 - 60.0)
 					_card_tooltip.position = pos
+					_card_tooltip.z_index = 10
 					_card_tooltip.visible = true
 					return
 	_card_tooltip.visible = false
@@ -1204,9 +1224,22 @@ func _human_has_throw_in_choice() -> bool:
 ## and interactive; anything that takes it off the table (they act, the bout
 ## resolves, the menu opens) clears the deadline, and it starts fresh next
 ## time _human_has_throw_in_choice() turns true again.
+##
+## "pass" is legally offered to an attacking seat the whole time the bout is
+## open, including while the defender is still mid-defence with cards still
+## unbeaten - so without this extra guard the clock could run out (and
+## auto-pass) before the defender even finished, then the table sweeps to
+## discard the instant they do, never actually giving anyone their 5 seconds
+## to throw in against the fully-answered table. Only held back for that one
+## case (Phase.DEFEND with something still unbeaten) - once the defender
+## takes instead of defending, the existing "one more round of throw-ins
+## before the pile is handed over" window starts the clock immediately, same
+## as always.
 func _update_throw_in_timer() -> void:
+	var defender_still_working := game != null and game.phase == DurakGame.Phase.DEFEND \
+		and _unbeaten_count() > 0
 	if throw_in_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack \
-	or not _human_has_throw_in_choice():
+	or defender_still_working or not _human_has_throw_in_choice():
 		_throw_in_deadline = -1.0
 		if _pass_button.visible:
 			_pass_button.text = "Pass"
@@ -1357,7 +1390,7 @@ func _process(_delta: float) -> void:
 			target_angle = deg_to_rad(hover_tilt) * lean_x # subtle flat in-plane lean, kept
 			# the real depth: a perspective tilt toward the cursor, warped in card_fx.gdshader
 			tilt_x = deg_to_rad(hover_3d) * -lean_y # cursor above centre -> top edge tips forward
-			tilt_y = deg_to_rad(hover_3d) * lean_x  # cursor right of centre -> right edge tips forward
+			tilt_y = deg_to_rad(hover_3d) * lean_x # cursor right of centre -> right edge tips forward
 			# never dead still while raised: a slow drift + a hair of tilt sway,
 			# phase-offset per card so a fanned hand doesn't pulse in unison
 			var t := Time.get_ticks_msec() * 0.001
@@ -1599,6 +1632,7 @@ func _resync() -> void:
 	_update_status()
 	_update_buttons()
 	_update_reserve_ui()
+	_prune_orphan_card_views()
 
 	# _process drives the hand every frame (fan pose + hover); drop the settle
 	# tween so the two don't fight over the same transform
@@ -1634,6 +1668,7 @@ func _animate_view_away(card: CardData) -> void:
 	if view == null:
 		return # a card that briefly passed through the table without ever rendering
 	_card_views.erase(card)
+	_ephemeral_views[view] = true # mid-fade, untracked but not yet freed - exempt it from the orphan sweep
 	var destination := talon_pos
 	var destination_angle := 0.0
 	if card in game.discard:
@@ -1651,7 +1686,9 @@ func _animate_view_away(card: CardData) -> void:
 	tween.tween_property(view, "rotation", destination_angle, clear_anim)
 	tween.tween_property(view, "scale", view.scale * 0.6, clear_anim)
 	tween.tween_property(view, "modulate:a", 0.0, clear_anim)
-	tween.chain().tween_callback(view.queue_free)
+	tween.chain().tween_callback(func():
+		_ephemeral_views.erase(view)
+		view.queue_free())
 
 
 ## Screen position for a zone tag from _snapshot()/_apply_and_animate()'s diff -
@@ -1664,7 +1701,7 @@ func _zone_pos(zone: String) -> Vector2:
 		return _reserve_label.position
 	if zone == "discard":
 		return discard_pos
-	return talon_pos  # "talon", or "table" (rare - specials don't currently pull a card off an unresolved table)
+	return talon_pos # "talon", or "table" (rare - specials don't currently pull a card off an unresolved table)
 
 
 ## A card visibly relocated by a special effect, outside the ordinary play/
@@ -1677,21 +1714,37 @@ func _zone_pos(zone: String) -> Vector2:
 ## individually-tracked views, so without a dedicated flight there was nothing
 ## to animate at all).
 func _animate_special_move(card: CardData, from_zone: String, to_zone: String) -> void:
-	var to_hand := to_zone.begins_with("hand:")
-	var view: Sprite2D = _card_views.get(card)
-	var ephemeral := view == null and not to_hand
+	var to_near_hand := to_zone == "hand:%d" % _near_seat()
+	var existing: Sprite2D = _card_views.get(card)
+
+	if existing != null and not to_near_hand:
+		# Was tracked as a face-up card (my own hand, or the table) and is
+		# headed somewhere that shouldn't show it face-up anymore - discard,
+		# the talon, or someone else's hand (Rebound spending itself; Palm
+		# swapping my card to an opponent). Fade it and stop tracking it,
+		# exactly like an ordinary pickup/discard - the bug this fixes left
+		# the OLD view sitting fully opaque wherever it landed forever, while
+		# a newer view (or none at all) occupied the same hand slot on top of
+		# it: the "card underneath" a hovered hand card.
+		_animate_view_away(card)
+		return
+	if existing == null and to_zone.begins_with("hand:") and not to_near_hand:
+		return # arriving face-down in someone else's hand - nothing to show
+
+	var view: Sprite2D = existing
+	var ephemeral := view == null and not to_near_hand
 	if view == null:
 		view = _instance_card()
-		view.setup(CardData.SUIT_NAMES[card.suit], card.rank, to_hand or to_zone == "table")
+		view.setup(CardData.SUIT_NAMES[card.suit], card.rank, true)
 		view.set_special(card.special)
 		view.position = _zone_pos(from_zone)
 		view.scale = Vector2.ONE * (talon_card_height / maxf(view.texture.get_height(), 1.0))
 		view.z_index = 30
 		_card_layer.add_child(view)
-		if to_hand:
-			_card_views[card] = view  # keep tracking it - _resync() takes over as a normal hand card next
+		if to_near_hand:
+			_card_views[card] = view # keep tracking it - _resync() takes over as a normal hand card next
 	_stop_tween(view)
-	var target_scale := _fit_scale(view, hand_card_height if to_hand else talon_card_height)
+	var target_scale := _fit_scale(view, hand_card_height if to_near_hand else talon_card_height)
 	var tween := create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.tween_property(view, "position", _zone_pos(to_zone), special_move_anim)
@@ -1703,9 +1756,38 @@ func _animate_special_move(card: CardData, from_zone: String, to_zone: String) -
 	flash.tween_property(view, "modulate", Color.WHITE, special_move_anim * 0.65)
 
 	if ephemeral:
+		_ephemeral_views[view] = true
 		await tween.finished
+		_ephemeral_views.erase(view)
 		if is_instance_valid(view):
 			view.queue_free()
+
+
+## Belt-and-suspenders consistency check, run at the end of every _resync():
+## every Sprite2D under _card_layer must be reachable from one of the
+## tracking structures below, or an in-flight ephemeral animation. Anything
+## else is a leak from some path that created a node without registering it
+## (or failed to un-register one that left tracking) - freed outright rather
+## than left to silently accumulate as a "ghost" card sitting on screen
+## forever, uncounted and unplayable (the exact bug this was added to catch).
+func _prune_orphan_card_views() -> void:
+	var known := {}
+	for view in _card_views.values():
+		known[view] = true
+	for view in _draft_card_views.values():
+		known[view] = true
+	for view in _ephemeral_views:
+		known[view] = true
+	for back in _talon_stack:
+		known[back] = true
+	for back in _discard_stack:
+		known[back] = true
+	for backs in _opponent_backs.values():
+		for back in backs:
+			known[back] = true
+	for child in _card_layer.get_children():
+		if not known.has(child):
+			child.queue_free()
 
 
 func _sync_back_stack(stack: Array, wanted: int, base: Vector2,
@@ -1792,10 +1874,13 @@ func _stop_tween(view: Node2D) -> void:
 
 func _fade_out_and_free(node: Node2D) -> void:
 	_stop_tween(node)
+	_ephemeral_views[node] = true # already popped off its tracking array by the caller - exempt from the orphan sweep
 	var tween := create_tween().set_parallel(true)
 	tween.tween_property(node, "modulate:a", 0.0, 0.22)
 	tween.tween_property(node, "scale", node.scale * 0.7, 0.22)
-	tween.chain().tween_callback(node.queue_free)
+	tween.chain().tween_callback(func():
+		_ephemeral_views.erase(node)
+		node.queue_free())
 
 
 # ---------------------------------------------------------------- input targets / hud
@@ -1875,7 +1960,7 @@ func _update_buttons() -> void:
 	_deflect_strip.visible = offered.call("deflect")
 
 
-const DRAFT_CARD_HEIGHT := 240.0  ## the draft overlay's offered cards are shown full-size, hoverable/clickable
+const DRAFT_CARD_HEIGHT := 240.0 ## the draft overlay's offered cards are shown full-size, hoverable/clickable
 const DRAFT_CARD_SPACING := 200.0
 
 ## Reserve panel + refill-choice row sit beside the human's own hand (spec
@@ -1938,7 +2023,7 @@ func _rebuild_draft_cards(actions: Array) -> void:
 		var hit_size: Vector2 = view.texture.get_size() * view.scale
 		var hit := Button.new()
 		hit.flat = true
-		hit.modulate = Color(1, 1, 1, 0)  # invisible - the card sprite underneath is the visual
+		hit.modulate = Color(1, 1, 1, 0) # invisible - the card sprite underneath is the visual
 		hit.custom_minimum_size = hit_size
 		hit.position = center - hit_size * 0.5
 		hit.pressed.connect(func(): _submit(action))
