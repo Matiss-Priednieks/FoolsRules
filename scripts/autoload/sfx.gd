@@ -10,7 +10,8 @@ extends Node
 ##   click() - every button press (hooked automatically, see _on_node_added)
 ##             and the countdown ticks
 ##   fan()   - a pile moving, a panel opening; fan_long() - the scene swipe
-## Fire / frost / liquid effects have no sound yet (none in the set).
+##   stamp() - the CLEARED stamp; fire() - cards burning
+## Frost / liquid effects have no sound yet.
 
 const VOICES := 16
 const HOVER_GAP := 0.06 ## seconds - hovers closer than this are dropped, so a fast sweep doesn't machine-gun
@@ -22,6 +23,8 @@ var _deal: Array[AudioStream] = []
 var _fan: Array[AudioStream] = []
 var _fan_long: Array[AudioStream] = []
 var _click: Array[AudioStream] = []
+var _stamp: Array[AudioStream] = []
+var _fire: Array[AudioStream] = []
 var _voices: Array[AudioStreamPlayer] = []
 var _next := 0
 var _last_hover := 0.0
@@ -36,6 +39,8 @@ func _ready() -> void:
 	_fan = [load("res://assets/audio/sfx/card_fan_1.mp3"), load("res://assets/audio/sfx/card_fan_2.mp3")]
 	_fan_long = [load("res://assets/audio/sfx/card_fan_3.mp3")]
 	_click = [load("res://assets/audio/sfx/penclick.mp3")]
+	_stamp = [load("res://assets/audio/sfx/stamp_sfx.mp3")]
+	_fire = [load("res://assets/audio/sfx/Fire_sfx.mp3")]
 	for _v in VOICES:
 		var voice := AudioStreamPlayer.new()
 		add_child(voice)
@@ -60,6 +65,16 @@ func hover() -> void:
 
 func click(trim_db := 0.0) -> void:
 	_play(_click, trim_db, 1.0)
+
+
+## the CLEARED stamp landing
+func stamp() -> void:
+	_play(_stamp, 0.0, 1.0)
+
+
+## cards going up in flames (Flame Hazard, Purge)
+func fire() -> void:
+	_play(_fire, 0.0, 1.0)
 
 
 func fan(trim_db := 2.0) -> void:

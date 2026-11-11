@@ -492,12 +492,12 @@ func _request_forge(game, seat: int) -> void:
 
 func _finish_forge(game, seat: int, target: CardData, source: CardData, mode: String) -> void:
 	game._forge_overrides.append({card = target, rank = target.rank, suit = target.suit})
+	var was := str(target)
 	if mode == "rank":
 		target.rank = source.rank
-		game.effect_log.append("Forge copies %s's rank onto P%d's %s" % [str(source), seat, str(target)])
 	else:
 		target.suit = source.suit
-		game.effect_log.append("Forge copies %s's suit onto P%d's %s" % [str(source), seat, str(target)])
+	game.effect_log.append("Forge turns P%d's %s into %s" % [seat, was, str(target)])
 
 
 ## Scramble (spec 5, Deflect attack half): when beaten and discarded, seating
@@ -528,20 +528,24 @@ func _mirror_attack(game, seat: int) -> void:
 	game._shuffle(pool)
 	var peek: Array = pool.slice(0, mini(3, pool.size()))
 	var shown: Array = peek.map(func(c): return str(c))
-	game.private_log.append({seat = seat,
+	# `picks` is what the UI shows (the dossier); `text` is the log line
+	game.private_log.append({seat = seat, target = game.defender,
+		picks = peek.map(func(c): return {card = c, owner = game.defender}),
 		text = "Mirror reveals %d of P%d's cards: %s" % [peek.size(), game.defender, ", ".join(shown)]})
 
 
 func _mirror_defense(game, seat: int) -> void:
 	var lines: Array[String] = []
+	var picks: Array = []
 	for other in game.num_players:
 		if other == seat or game.is_out[other] or game.hands[other].is_empty():
 			continue
 		var pool: Array = game.hands[other]
 		var card: CardData = pool[game._rng.randi_range(0, pool.size() - 1)]
 		lines.append("P%d: %s" % [other, str(card)])
+		picks.append({card = card, owner = other})
 	if not lines.is_empty():
-		game.private_log.append({seat = seat,
+		game.private_log.append({seat = seat, target = -1, picks = picks,
 			text = "Mirror peeks at one card from each opponent - %s" % ", ".join(lines)})
 
 

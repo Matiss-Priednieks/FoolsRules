@@ -19,6 +19,7 @@ const BOARD_CENTER := Vector2(960, 540)
 @export_range(0.0, 1.5, 0.01) var play_beat := 0.34 ## hold after a card is played
 @export_range(0.0, 1.5, 0.01) var clear_anim := 0.40 ## cards leaving the table (to discard / into a hand)
 @export_range(0.0, 1.5, 0.01) var clear_beat := 0.34 ## hold after the table clears
+@export_range(0.0, 3.0, 0.01) var stamp_beat := 1.1 ## how long the CLEARED stamp sits on a beaten table before it's swept
 @export_range(0.0, 1.5, 0.01) var refill_anim := 0.26 ## a card flying from the talon into a hand
 @export_range(0.0, 1.5, 0.01) var refill_beat := 0.14 ## hold after each seat refills
 @export_range(0.0, 2.5, 0.01) var special_move_anim := 0.85 ## a special effect visibly moving a card (Sift, Cull, ...) - deliberately slower than an ordinary play, so it doesn't blend into normal card traffic
@@ -125,7 +126,7 @@ var _hand_slots: Array = [] # [{view, card, home_pos, home_angle, home_scale, pl
 var _open_attack_views: Array = [] # [{view, table_index}] for not-yet-beaten attacks
 var _draft_card_views: Dictionary = {} # CardData -> Sprite2D, the draft overlay's offered cards (rebuilt each resync)
 var _ephemeral_views: Dictionary = {} # Sprite2D -> true, an in-flight _animate_special_move() view not otherwise tracked
-var _draft_buttons: Array[Button] = [] # invisible click targets over _draft_card_views, same lifetime
+var _draft_buttons: Array[Control] = [] # invisible click targets over _draft_card_views, same lifetime
 var _reserve_draws_this_action: Dictionary = {} # card -> true, cards drawn from reserve (not talon) this _apply_and_animate() - tells _view_start_pos() where to fly them in from
 var _drag := {} # {view, card, home_pos, grab_offset} while dragging
 var _hovered_view: Node = null
@@ -134,6 +135,7 @@ var _menu_open := false # the mid-game menu overlay is up; blocks board input, d
 var _throw_in_deadline := -1.0 # Time.get_ticks_msec()/1000.0 value; -1 = no throw-in timer running
 var _draft_deadline := -1.0 # same, for a pending draft offer (spec 4.2)
 var _special_choice_deadline := -1.0 # same, for a pending Palm/Singleout/Stack/Forge choice
+var _special_ui: SpecialUI # dossier, sealed folders, plate tags + intel chips
 var _hand_sort := "rank" # "rank" | "suit" - purely local display order, never touches game.hands
 
 # --- audio ----------------------------------------------------------------
@@ -200,6 +202,10 @@ func _ready() -> void:
 	_pause_quit.pressed.connect(_to_menu)
 	_music_slider.value = Music.volume
 	_music_slider.value_changed.connect(Music.set_volume)
+	_special_ui = SpecialUI.new(self)
+	_ui_root.add_child(_special_ui)
+	_ui_root.move_child(_special_ui, _pause_overlay.get_index()) # under the pause menu
+	_build_log()
 
 	RenderingServer.set_default_clear_color(Color(0.05, 0.22, 0.12))
 	if _headless:
@@ -489,6 +495,7 @@ func _new_game() -> void:
 	# SpecialEffects is stateless (all randomness goes through game._rng), so a
 	# fresh instance per peer stays sync-safe under the same seed.
 	game = DurakGame.new(players, game_seed, SpecialEffects.new())
+	_special_ui.reset()
 	_ensure_seat_labels(game.num_players)
 	game.game_over.connect(_on_game_over)
 	_deal_out() # animate the deal, then settle + hand off to the bots
@@ -979,6 +986,18 @@ func _apply_and_animate(action: Dictionary) -> void:
 	_busy = true
 	_waiting_for_human = false
 	var before := _snapshot()
+	# Where the played card would sit - computed now, because a card that ends
+	# the bout in the same action (the Joker) is already off the table after.
+	var lead: CardData = action.get("card") if action.type in ["attack", "defend", "deflect"] else null
+	var lead_slot := {}
+	if lead != null:
+		var n := game.table.size()
+		var defending: bool = action.type == "defend"
+		var j := _table_jitter(lead)
+		var i: int = action.target if defending else n
+		var count := n if defending else n + 1
+		lead_slot = {pos = _table_slot_pos(i, count, defending) + Vector2(j.x, j.y),
+			angle = (0.14 if defending else 0.0) + j.z, z = _table_z(i, defending)}
 
 	game.apply_action(action)
 	# Captured immediately - apply_action() clears effect_log at its own next
@@ -987,12 +1006,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 		_flash_effect(game.effect_log.duplicate())
 	# Mirror's peeks (spec 5, Sleight) are seat-scoped, not a table-wide toast -
 	# only show the ones meant for this client's own seat.
-	var mine_to_see: Array[String] = []
-	for entry in game.private_log:
-		if entry.seat == human_seat:
-			mine_to_see.append("[peek] " + entry.text)
-	if not mine_to_see.is_empty():
-		_flash_effect(mine_to_see)
+	_show_peeks(game.private_log)
 
 	# sort every moved card into what happened to it
 	var played: Array[CardData] = []
@@ -1039,6 +1053,18 @@ func _apply_and_animate(action: Dictionary) -> void:
 			# flagged for its own slower, flashier animation (see
 			# _animate_special_move()) instead of blending into normal traffic.
 			special_moved.append({card = card, from = was, to = now})
+	# The played card went hand -> table -> gone in one action (the Joker ends
+	# the attack on the spot): still show it landing before the table clears.
+	if lead != null and before.get(lead, "").begins_with("hand:") and lead not in played \
+			and lead not in burned_now.map(func(e): return e.card):
+		special_moved = special_moved.filter(func(e): return e.card != lead)
+		played.append(lead)
+		var now: String = after.get(lead, "")
+		if now == "discard":
+			discarded.append(lead)
+		elif now.begins_with("hand:"):
+			taken.append(lead)
+			taker = now.substr(5).to_int()
 
 	# 0. a card I just drafted flies from the draft overlay onto my shelf
 	if human_seat >= 0:
@@ -1066,6 +1092,8 @@ func _apply_and_animate(action: Dictionary) -> void:
 			if origin_seat >= 0:
 				view.position = _seat_layout(origin_seat).origin
 		var slot := _table_target_for(card)
+		if card == lead and not game.table.any(func(p): return p.attack == card or p.defense == card):
+			slot = lead_slot
 		view.z_index = slot.z
 		_animate_to(view, slot.pos, slot.angle, _fit_scale(view, table_card_height), play_anim, 0.0)
 	if not played.is_empty():
@@ -1090,6 +1118,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 
 	# 1.5 burned cards go up in flames where they are, before the table clears
 	if not burned_now.is_empty():
+		Sfx.fire()
 		for entry in burned_now:
 			_animate_burn(entry.card, entry.from)
 		await _wait(burn_beat)
@@ -1097,9 +1126,14 @@ func _apply_and_animate(action: Dictionary) -> void:
 
 	# 2. clear the table
 	if not discarded.is_empty():
+		# the bout is over: stamp it, let it sink in, then sweep
+		var stamp := _stamp_table("CLEARED")
+		await _wait(stamp_beat)
+		if run_id != _game_id: return
+		stamp.create_tween().tween_property(stamp, "modulate:a", 0.0, clear_anim).finished.connect(stamp.queue_free) # resync may free it first, so the tween lives on it
 		Sfx.fan()
-		for card in discarded:
-			_animate_view_away(card)
+		await _wait(_sweep_to_discard(discarded))
+		if run_id != _game_id: return
 		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
 			discard_pos, discard_card_height, 1)
 		await _wait(clear_beat)
@@ -1145,6 +1179,18 @@ func _apply_and_animate(action: Dictionary) -> void:
 	if run_id != _game_id:
 		return
 	_resync() # 4. settle every sprite to the final layout and unlock input
+
+
+## A passport-style ink stamp slammed over the middle of the table, tilted
+## like it was done by hand. Caller frees it.
+func _stamp_table(text: String) -> Control:
+	var box := _special_ui.ink_box(text, 92, 7)
+	box.z_index = 900 # over every table card
+	_card_layer.add_child(box)
+	_special_ui.slam(box)
+	box.position = BOARD_CENTER - box.pivot_offset
+	box.rotation = randf_range(-0.22, -0.1)
+	return box
 
 
 func _wait(seconds: float) -> void:
@@ -1387,6 +1433,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
+			var targets := _choice_target_seats()
+			for seat in targets:
+				if _seat_click_rect(seat).has_point(_mouse()):
+					_submit(targets[seat])
+					return
 			_begin_drag()
 		else:
 			_end_drag()
@@ -1406,13 +1457,37 @@ func _begin_drag() -> void:
 				grab_offset = mouse - slot.view.global_position,
 			}
 			slot.view.z_index = 100
+			_special_ui.close_dossier()
 			return
 
 
 func _end_drag() -> void:
-	if _drag.is_empty():
+	if _drag.is_empty() or _drag.get("dropped", false):
 		return
 	var mouse := _mouse()
+	# Let go while a bot's card is still landing (they throw in while you
+	# defend): _submit() would refuse it and leave the card stranded on the
+	# table with the game waiting on you. Hold it where it was dropped and
+	# play it once the board settles - or send it home if that made it illegal.
+	if _busy or _awaiting_ack:
+		_drag.dropped = true
+		var held: Dictionary = _drag
+		while (_busy or _awaiting_ack) and is_same(_drag, held):
+			await get_tree().process_frame
+		if not is_same(_drag, held):
+			return # a restart / resync dropped it meanwhile
+	if game.phase == DurakGame.Phase.SPECIAL_CHOICE:
+		var picks := _special_choice_actions().filter(func(a): return a.get("card") == _drag.card)
+		var picked: Node2D = _drag.view
+		_drag = {}
+		if is_instance_valid(picked):
+			picked.z_index = 0
+		if picks.size() == 1:
+			_submit(picks[0])
+		elif picks.size() > 1: # Forge source: rank or suit?
+			_forge_pick = picks[0].card
+			_rebuild_forge_modes()
+		return
 	var actions := _human_actions()
 	# Released back over the hand (or a plain click on a hand card) = changed
 	# your mind: never a play, even where table_drop_rect overlaps the fan.
@@ -1478,13 +1553,123 @@ var _effect_queue: Array[String] = []
 var _effect_toast_until := 0.0
 
 
+## Mirror's peeks. Mine from this one action merge into a single open dossier
+## (Solidarity can fire several at once); anyone else's show as a sealed
+## folder over each player they looked at, so you know it happened, not what.
+func _show_peeks(entries: Array) -> void:
+	var mine: Array = []
+	var single_target := true
+	var first_target := -2
+	for entry in entries:
+		if not entry.has("picks"):
+			continue
+		if entry.seat == human_seat:
+			mine.append_array(entry.picks)
+			if first_target == -2:
+				first_target = entry.target
+			single_target = single_target and entry.target >= 0 and entry.target == first_target
+			_effect_history_add("[peek] " + _pretty(entry.text))
+		else:
+			var targets := {}
+			for pick in entry.picks:
+				targets[pick.owner] = true
+			for target in targets:
+				_special_ui.sealed(target, entry.seat)
+	if mine.is_empty():
+		return
+	var title := "Mirror: one card from each player"
+	var about := -1
+	if single_target:
+		about = first_target
+		title = "Mirror: %s's cards" % _display_name(first_target)
+	_special_ui.peek(title, mine, about)
+
+
 ## Queues the special-card catalogue's effect log to show over the table, one
-## message at a time (dev-quality visible feedback, same spirit as the name
-## band on the card itself - a placeholder for real presentation, not the
-## final UI). Empty in vanilla play.
+## message at a time, and keeps it in the Log so a missed one isn't lost.
 func _flash_effect(messages: Array[String]) -> void:
 	for msg in messages:
-		_effect_queue.append(_localize_seat_names(msg))
+		var text := _pretty(msg)
+		_effect_queue.append(text)
+		_effect_history_add(text)
+
+
+## Engine log line -> something a person reads: seat numbers become names,
+## "6C" becomes "6♣", and "You" gets its grammar ("You draft ... your").
+var _card_token := RegEx.create_from_string("\\b(10|[2-9JQKA]|Jk)([CDHS])\\b")
+func _pretty(text: String) -> String:
+	var t := _localize_seat_names(text)
+	var found := _card_token.search_all(t)
+	found.reverse() # replace back to front so earlier offsets stay valid
+	for m in found:
+		var suit := "CDHS".find(m.get_string(2))
+		var rank := "Joker" if m.get_string(1) == "Jk" else m.get_string(1)
+		t = t.substr(0, m.get_start()) + rank + SUIT_GLYPHS[suit] + t.substr(m.get_end())
+	if t.begins_with("You drafts"):
+		t = t.replace("You drafts", "You draft").replace("their reserve", "your reserve")
+	t = t.replace("You's", "your").replace(" You ", " you ").replace(" You.", " you.")
+	if t.ends_with(" You"):
+		t = t.left(-3) + "you"
+	return t
+
+
+# ---------------------------------------------------------------- effect log
+
+## The last few things specials did, behind a "Log" button by the menu one.
+const LOG_LINES := 12
+var _effect_history: Array[String] = []
+var _log_panel: PanelContainer
+var _log_list: VBoxContainer
+
+
+func _build_log() -> void:
+	var button: Button = _pause_button.duplicate()
+	button.text = "Log"
+	button.offset_left = _pause_button.offset_left - 108.0
+	button.offset_right = _pause_button.offset_left - 12.0
+	_ui_root.add_child(button)
+	button.pressed.connect(func(): _log_panel.visible = not _log_panel.visible)
+	_log_panel = PanelContainer.new()
+	_log_panel.theme_type_variation = &"PlatePanel"
+	_log_panel.visible = false
+	_log_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_log_panel.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			_log_panel.visible = false)
+	_log_list = VBoxContainer.new()
+	_log_panel.add_child(_log_list)
+	_ui_root.add_child(_log_panel)
+	_refresh_log()
+
+
+func _effect_history_add(text: String) -> void:
+	_effect_history.append(text)
+	if _effect_history.size() > LOG_LINES:
+		_effect_history.pop_front()
+	_refresh_log()
+
+
+func _refresh_log() -> void:
+	if _log_list == null:
+		return
+	for child in _log_list.get_children():
+		_log_list.remove_child(child)
+		child.queue_free()
+	var lines := _effect_history.duplicate()
+	lines.reverse() # newest on top
+	if lines.is_empty():
+		lines = ["Nothing yet. Special card effects show up here."]
+	for i in lines.size():
+		var label := Label.new()
+		label.theme_type_variation = &"HudLabel"
+		label.add_theme_font_size_override("font_size", 22)
+		label.text = lines[i]
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.custom_minimum_size.x = 560
+		label.modulate.a = 1.0 if i == 0 else 0.75
+		_log_list.add_child(label)
+	_log_panel.reset_size()
+	_log_panel.position = Vector2(1920.0 - 40.0 - _log_panel.size.x, 90.0)
 
 
 func _update_effect_toast() -> void:
@@ -1650,10 +1835,9 @@ func _update_draft_timer() -> void:
 		_submit(offers[randi() % offers.size()])
 
 
-## No dedicated UI yet for Palm/Singleout/Stack/Forge's targeting (choosing an
-## opponent, a talon order, a source card) - see the roadmap. Auto-picking
-## random on a timeout keeps a human seat from freezing the whole table (this
-## pause blocks everyone, same as a draft pick) until real UI lands.
+## A special's choice (Palm/Singleout/Denunciation: click a player; Stack:
+## the overlay; Forge: click hand cards) pauses the whole table, so a timer
+## still auto-picks at random if it's left untouched - shown on the banner.
 func _update_special_choice_timer() -> void:
 	var choices := _special_choice_actions()
 	if special_choice_seconds <= 0.0 or _busy or _menu_open or _awaiting_ack or choices.is_empty():
@@ -1662,11 +1846,91 @@ func _update_special_choice_timer() -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	if _special_choice_deadline < 0.0:
 		_special_choice_deadline = now + special_choice_seconds
-		return
-	_countdown_tick("special", _special_choice_deadline - now)
-	if now >= _special_choice_deadline:
+	var remaining := _special_choice_deadline - now
+	var shown := "%s   %d" % [_choice_banner(), ceili(maxf(remaining, 0.0))]
+	if _choice_kind() == "stack":
+		_turn_banner.visible = false # the overlay's title says it
+	elif _turn_banner.text != shown:
+		_turn_banner.text = shown
+		_turn_banner.reset_size()
+		_turn_banner.position.x = 960.0 - _turn_banner.size.x * 0.5
+	if _draft_overlay.visible and _draft_pick_actions().is_empty():
+		_draft_countdown.text = "auto-picks in %d..." % ceili(maxf(remaining, 0.0)) # Stack
+	_countdown_tick("special", remaining)
+	if remaining <= 0.0:
 		_special_choice_deadline = -1.0
+		_forge_pick = null
 		_submit(choices[randi() % choices.size()])
+
+
+## The pending choice's kind ("palm", "stack", "forge_source"...) when it's
+## this player's to make, else "".
+func _choice_kind() -> String:
+	if game == null or game.phase != DurakGame.Phase.SPECIAL_CHOICE or _special_choice_actions().is_empty():
+		return ""
+	return game._special_choice.get("kind", "")
+
+
+func _choice_banner() -> String:
+	match _choice_kind():
+		"palm": return "PALM  ·  PICK WHO TO SWAP WITH"
+		"singleout": return "SINGLEOUT  ·  PICK WHO DEFENDS"
+		"denounce": return "DENUNCIATION  ·  PICK WHO DEFENDS NEXT"
+		"stack": return "STACK  ·  SET THE TALON'S ORDER"
+		"forge_target": return "FORGE  ·  PICK A CARD TO CHANGE"
+		"forge_source": return "FORGE  ·  PICK A CARD TO COPY FROM"
+	return "YOUR MOVE  ·  CHOOSE"
+
+
+## Seats the pending choice lets you click (Palm/Singleout/Denunciation).
+func _choice_target_seats() -> Dictionary:
+	var seats := {}
+	if _choice_kind() in ["palm", "singleout", "denounce"]:
+		for action in _special_choice_actions():
+			seats[action.target] = action
+	return seats
+
+
+## Where a click counts as picking `seat`: its plate, or its fan of cards.
+func _seat_click_rect(seat: int) -> Rect2:
+	var plate: Control = _seat_labels[seat]
+	var rect := Rect2(plate.position, plate.get_combined_minimum_size()).grow(8.0)
+	var fan := Rect2(_seat_layout(seat).origin - Vector2(130, 130), Vector2(260, 260))
+	return rect.merge(fan)
+
+
+## Forge's second step: a card copyable both ways (rank and suit) asks which,
+## with two buttons over your hand. `_forge_pick` = the source card clicked.
+var _forge_pick: CardData = null
+var _forge_modes: HBoxContainer = null
+func _rebuild_forge_modes() -> void:
+	if _forge_modes != null:
+		_forge_modes.queue_free()
+		_forge_modes = null
+	if _choice_kind() != "forge_source" or _forge_pick == null:
+		_forge_pick = null
+		return
+	var target: CardData = game._special_choice.get("target")
+	_forge_modes = HBoxContainer.new()
+	_forge_modes.add_theme_constant_override("separation", 16)
+	for action in _special_choice_actions():
+		if action.card != _forge_pick:
+			continue
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		var rank_name: String = CardData.RANK_NAMES.get(_forge_pick.rank, str(_forge_pick.rank))
+		b.text = "Copy rank (%s)" % rank_name if action.target == 0 else "Copy suit (%s)" % SUIT_GLYPHS[_forge_pick.suit]
+		b.pressed.connect(func():
+			_forge_pick = null
+			_submit(action))
+		_forge_modes.add_child(b)
+	var hint := Label.new()
+	hint.theme_type_variation = &"Toast"
+	hint.text = "onto your %s" % _pretty(str(target)) if target != null else ""
+	_forge_modes.add_child(hint)
+	_ui_root.add_child(_forge_modes)
+	_forge_modes.size = _forge_modes.get_combined_minimum_size()
+	_forge_modes.position = Vector2(960.0 - _forge_modes.size.x * 0.5, 740.0)
 
 
 func _process(_delta: float) -> void:
@@ -1676,6 +1940,10 @@ func _process(_delta: float) -> void:
 	_update_draft_timer()
 	_update_special_choice_timer()
 	_update_draft_hover()
+	var pulse := 1.0 + 0.25 * (0.5 + 0.5 * sin(Time.get_ticks_msec() / 160.0))
+	var targets := _choice_target_seats()
+	for seat in _seat_labels.size():
+		_seat_labels[seat].modulate = Color(pulse, pulse, pulse) if targets.has(seat) and not _busy else Color.WHITE
 
 	if _hand_slots.is_empty():
 		return
@@ -1683,7 +1951,7 @@ func _process(_delta: float) -> void:
 	var mouse := _mouse()
 	var dragging: bool = not _drag.is_empty()
 
-	if dragging and is_instance_valid(_drag.view):
+	if dragging and is_instance_valid(_drag.view) and not _drag.get("dropped", false):
 		var dragged: Node2D = _drag.view
 		dragged.global_position = dragged.global_position.lerp(
 			mouse - _drag.grab_offset, drag_follow)
@@ -1692,13 +1960,11 @@ func _process(_delta: float) -> void:
 			dragged.set_lifted(true, drag_follow)
 		dragged.z_index = 100
 
-	# a move is animating: the choreography owns every card, and _hand_slots may
-	# still point at a hand view it is about to free. Leave the hand alone.
-	if _busy:
-		return
-
-	# hover / raise only when the human can actually act; the fan still settles below
-	var interactive: bool = _waiting_for_human and not dragging and not _awaiting_ack and not _board_blocked() \
+	# Hover works the whole game, not just on your move or between animations
+	# (with more players, bots moving / bouts you're not in are most of the
+	# game, so gating on those made hover feel random). While a move animates,
+	# cards it's moving have a "tween" meta and are skipped below.
+	var interactive: bool = not dragging and not _awaiting_ack and not _board_blocked() \
 		and (not _touch or _press_at >= 0.0)
 	# the hovered card keeps hover anywhere over where it's actually drawn now
 	# (raised, enlarged, fan-rotated) - not just its smaller resting slot
@@ -1710,13 +1976,13 @@ func _process(_delta: float) -> void:
 			_hovered_view = prev
 		else:
 			for i in range(_hand_slots.size() - 1, -1, -1):
-				if _hand_slot_rect(_hand_slots[i]).has_point(mouse):
+				# (mid-animation a slot can point at a view that was just freed)
+				if is_instance_valid(_hand_slots[i].view) and _hand_slot_rect(_hand_slots[i]).has_point(mouse):
 					_hovered_view = _hand_slots[i].view
 					break
 
-	# only cards you can play respond (lift + click); a dead card just gets
-	# its "why not" tooltip
-	if _hovered_view != null and _hovered_view != prev_for_sound 			and _hand_slots.any(func(sl): return sl.view == _hovered_view and sl.playable):
+	if _hovered_view != null and _hovered_view != prev_for_sound \
+			and _hand_slots.any(func(sl): return sl.view == _hovered_view and _lifts(sl)):
 		Sfx.hover()
 
 	# settle every hand card onto its fan slot each frame - position, tilt, scale
@@ -1728,7 +1994,9 @@ func _process(_delta: float) -> void:
 		var view: Node2D = slot.view
 		if dragging and view == _drag.view:
 			continue
-		var raised: bool = view == _hovered_view and slot.playable
+		if view.has_meta("tween") and is_instance_valid(view.get_meta("tween")) and view.get_meta("tween").is_running():
+			continue # mid-animation (drawn, played, sorted): the tween owns it
+		var raised: bool = view == _hovered_view and _lifts(slot)
 		# lift perpendicular to the fan so a tilted card rises straight off the arc
 		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
 		var goal: Vector2 = slot.home_pos + (lift if raised else Vector2.ZERO)
@@ -1760,13 +2028,20 @@ func _process(_delta: float) -> void:
 		view.z_index = 60 if raised else 10 + idx
 
 
+## Whether a hovered hand card lifts: on your move only the playable ones do
+## (a dead card just shows its "why not" tooltip); otherwise any card does, so
+## you can look over your hand while the others play.
+func _lifts(slot: Dictionary) -> bool:
+	return slot.playable or not _waiting_for_human
+
+
 const PLAYABLE_RISE := 16.0 ## px a playable hand card sits above the rest during your move
 
 
 ## Why `card` (in my hand) can't be played right now - shown as a tooltip on
 ## hover. Mirrors durak_game's legality checks; "" when it's simply not my move.
 func _unplayable_reason(card: CardData) -> String:
-	if not _waiting_for_human or human_seat < 0:
+	if not _waiting_for_human or human_seat < 0 or game.phase == DurakGame.Phase.SPECIAL_CHOICE:
 		return ""
 	var joker := card.special == &"joker" or card.rank == CardData.JOKER_RANK
 	if game.phase == DurakGame.Phase.DEFEND and human_seat == game.defender:
@@ -1958,9 +2233,17 @@ func _display_hand(seat: int) -> Array:
 	return hand
 
 
+## Opponents' fans are bunched tight (you only see backs) to leave the table
+## room: 16px a card, and a big pickup squeezes to OPP_FAN_MAX_SPAN overall.
+const OPP_FAN_STEP := 16.0
+const OPP_FAN_MAX_SPAN := 170.0
+func _opp_spacing(hand_size: int) -> float:
+	return minf(OPP_FAN_STEP, OPP_FAN_MAX_SPAN / maxf(hand_size - 1, 1)) * _opp_scale()
+
+
 func _opponent_slot_pos(seat: int, index: int, hand_size: int) -> Vector2:
 	var layout := _seat_layout(seat)
-	var spacing := 26.0 * _opp_scale()
+	var spacing := _opp_spacing(hand_size)
 	var span := spacing * maxf(hand_size - 1, 0)
 	var offset := -span * 0.5 + index * spacing
 	return layout.origin + (Vector2(0, offset) if layout.vertical else Vector2(offset, 0))
@@ -2095,6 +2378,10 @@ func _resync() -> void:
 		if is_instance_valid(view):
 			_dress(view, card)
 	_prune_orphan_card_views()
+	_special_ui.refresh()
+	if not _special_choice_actions().is_empty():
+		_special_ui.close_dossier() # its cards stay as chips; it mustn't cover the choice
+	_rebuild_forge_modes()
 
 	# _process drives the hand every frame (fan pose + hover); drop the settle
 	# tween so the two don't fight over the same transform
@@ -2106,6 +2393,9 @@ func _resync() -> void:
 ## moment a view exists, so a card in flight already looks like it will once it
 ## lands (no shimmer/status/glaze "pop" on arrival).
 func _dress(view: Sprite2D, card: CardData) -> void:
+	var suit_name: String = CardData.SUIT_NAMES[card.suit]
+	if view.face_up and (view.suit != suit_name or view.rank != card.rank):
+		view.setup(suit_name, card.rank, true) # Forge / Propaganda re-inked it
 	view.set_special(card.special)
 	view.set_trump_shimmer(card.suit == game.trump_suit)
 	view.set_status(card.status)
@@ -2133,6 +2423,57 @@ func _view_start_pos(card: CardData) -> Vector2:
 	if _reserve_draws_this_action.has(card):
 		return _reserve_label.position
 	return talon_pos
+
+
+## A beaten table goes the way a person clears it: a hand sweeps the cards
+## into one rough pile on the discard side (left cards first, the way the
+## hand travels), each card tips up on its edge and comes down face-down,
+## then the pile slides onto the discard. Returns how long it all takes.
+func _sweep_to_discard(cards: Array[CardData]) -> float:
+	var gather := Vector2(discard_pos.x - 320.0, BOARD_CENTER.y)
+	var sweep := clear_anim * 0.8
+	var edge := 0.09
+	var views: Array[Sprite2D] = []
+	for card in cards:
+		var view: Sprite2D = _card_views.get(card)
+		if view != null:
+			_card_views.erase(card)
+			views.append(view)
+	if views.is_empty():
+		return 0.0
+	var min_x: float = views.map(func(v): return v.position.x).min()
+	var max_delay := 0.0
+	for i in views.size():
+		var view := views[i]
+		_ephemeral_views[view] = true # exempt from the orphan sweep while it flies
+		_stop_tween(view)
+		if view.has_method("set_hover_tilt"):
+			view.set_hover_tilt(0.0, 0.0)
+		var delay := (view.position.x - min_x) / 1400.0 * 0.3
+		max_delay = maxf(max_delay, delay)
+		var full_x := view.scale.x
+		var t := view.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		t.tween_interval(delay)
+		t.tween_property(view, "position", gather + Vector2(i * 3.0, -i * 2.0), sweep)
+		t.parallel().tween_property(view, "rotation", randf_range(-0.08, 0.08), sweep)
+		t.tween_property(view, "scale:x", 0.0, edge).set_ease(Tween.EASE_IN) # up on its edge
+		t.tween_callback(func():
+			var back := _new_back(view.position, view.z_index)
+			back.rotation = view.rotation
+			back.scale = Vector2(0.0, view.scale.y)
+			_ephemeral_views[back] = true
+			_ephemeral_views.erase(view)
+			view.queue_free()
+			var bt := back.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			bt.tween_property(back, "scale:x", full_x, edge) # ...and down, face-down
+			var land := _fit_scale(back, discard_card_height)
+			bt.tween_property(back, "position", discard_pos, clear_anim)
+			bt.parallel().tween_property(back, "rotation", 0.0, clear_anim)
+			bt.parallel().tween_property(back, "scale", land, clear_anim)
+			bt.tween_callback(func():
+				_ephemeral_views.erase(back)
+				back.queue_free()))
+	return max_delay + sweep + edge * 2.0 + clear_anim
 
 
 func _animate_view_away(card: CardData) -> void:
@@ -2247,7 +2588,18 @@ func _animate_special_move(card: CardData, from_zone: String, to_zone: String) -
 		_animate_view_away(card)
 		return
 	if existing == null and to_zone.begins_with("hand:") and not to_near_hand:
-		return # arriving face-down in someone else's hand - nothing to show
+		# face-down into someone else's hand (Holdout, Palm, Requisition): a
+		# back makes the trip so it doesn't just appear in their fan
+		var back := _new_back(_zone_pos(from_zone), 30)
+		back.scale = _fit_scale(back, talon_card_height)
+		_ephemeral_views[back] = true
+		var trip := back.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		trip.tween_property(back, "position", _zone_pos(to_zone), special_move_anim)
+		trip.tween_property(back, "modulate:a", 0.0, 0.15)
+		trip.tween_callback(func():
+			_ephemeral_views.erase(back)
+			back.queue_free())
+		return
 
 	var view: Sprite2D = existing
 	var ephemeral := view == null and not to_near_hand
@@ -2362,6 +2714,9 @@ func _update_seat_label(seat: int) -> void:
 		label.text += "  ·  RESERVE %d" % game.reserves[seat].size() # drafted specials they're holding
 	if role != "":
 		label.text += "   %s" % role
+	if _choice_target_seats().has(seat):
+		label.text += "   ◂ PICK"
+		plate = &"SeatPlateAttack"
 	label.theme_type_variation = plate
 	label.visible = true
 	label.reset_size()
@@ -2372,11 +2727,12 @@ func _update_seat_label(seat: int) -> void:
 		return
 	var card_h := opponent_card_height * _opp_scale()
 	var card_w := card_h * 500.0 / 726.0
-	var span := 26.0 * _opp_scale() * maxf(game.hands[seat].size() - 1, 0)
+	var span := _opp_spacing(game.hands[seat].size()) * maxf(game.hands[seat].size() - 1, 0)
 	if layout.vertical: # side fan runs down, cards sideways: plate above its top end
 		label.position = layout.origin + Vector2(-size.x * 0.5, -span * 0.5 - card_w * 0.5 - 12.0 - size.y)
 	else: # top fan runs across: plate just below it
 		label.position = layout.origin + Vector2(-size.x * 0.5, card_h * 0.5 + 10.0)
+	label.position.x = clampf(label.position.x, 12.0, 1908.0 - size.x)
 
 
 # ---------------------------------------------------------------- sprite helpers
@@ -2491,7 +2847,7 @@ func _update_status() -> void:
 	if not game.is_finished() and _waiting_for_human and not game._draft_pause_active() and not _human_actions().is_empty():
 		match game.phase:
 			DurakGame.Phase.SPECIAL_CHOICE:
-				text = "YOUR MOVE  ·  CHOOSE"
+				text = "" if _choice_kind() == "stack" else _choice_banner()
 			_:
 				text = "YOUR MOVE  ·  DEFEND" if human_seat == game.defender else "YOUR MOVE  ·  ATTACK"
 	_turn_banner.visible = text != ""
@@ -2551,6 +2907,15 @@ func _update_reserve_ui() -> void:
 	var draft_actions := _draft_pick_actions()
 	_draft_overlay.visible = game._draft_pause_active()
 	_draft_title.text = "Waiting for other players..." if draft_actions.is_empty() else "Draft - pick one"
+	if _choice_kind() == "stack":
+		# same overlay: the talon's top cards face-up, click them in the order
+		# you want to draw them; the ones already placed sit below, numbered
+		draft_actions = _special_choice_actions()
+		var placed: Array = game._special_choice.get("order", [])
+		_draft_overlay.visible = true
+		_draft_title.text = "Stack: pick the %s card off the talon" % _ordinal(placed.size() + 1)
+		_rebuild_draft_cards(draft_actions, placed)
+		return
 	_rebuild_draft_cards(draft_actions)
 
 
@@ -2558,7 +2923,7 @@ func _update_reserve_ui() -> void:
 ## are never more than 4, so this is cheap): a real card sprite per offer, for
 ## the tooltip hover and the name band, plus an invisible click target the
 ## same size laid on top of it, since Sprite2D has no click signal of its own.
-func _rebuild_draft_cards(actions: Array) -> void:
+func _rebuild_draft_cards(actions: Array, placed: Array = []) -> void:
 	for view in _draft_card_views.values():
 		view.queue_free()
 	_draft_card_views.clear()
@@ -2594,6 +2959,25 @@ func _rebuild_draft_cards(actions: Array) -> void:
 		hit.pressed.connect(func(): _submit(action))
 		_draft_overlay.add_child(hit)
 		_draft_buttons.append(hit)
+
+	# Stack's already-ordered cards, small, numbered by when they'll be drawn
+	for i in placed.size():
+		var card: CardData = placed[i]
+		var view := _instance_card()
+		view.setup(CardData.SUIT_NAMES[card.suit], card.rank, true)
+		_dress(view, card)
+		view.scale = Vector2.ONE * (130.0 / maxf(view.texture.get_height(), 1.0))
+		view.position = Vector2(960.0 - (placed.size() - 1) * 55.0 + i * 110.0, 900)
+		view.set_meta("home_pos", view.position)
+		view.set_meta("home_scale", view.scale)
+		_draft_overlay.add_child(view)
+		_draft_card_views[card] = view
+		var num := Label.new()
+		num.theme_type_variation = &"Toast"
+		num.text = _ordinal(i + 1)
+		num.position = view.position + Vector2(-30, -110)
+		_draft_overlay.add_child(num)
+		_draft_buttons.append(num) # freed with the rest on the next rebuild
 
 
 

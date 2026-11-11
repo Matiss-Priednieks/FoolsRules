@@ -12,9 +12,9 @@ config_version=5
 
 config/name="durak"
 run/main_scene="res://scenes/menu.tscn"
-config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
 config/quit_on_go_back=false
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="uid://bqckf788e4elv"
 
 [autoload]
 
@@ -53,7 +53,3 @@ anti_aliasing/quality/msaa_2d=3
 anti_aliasing/quality/msaa_3d=3
 anti_aliasing/quality/screen_space_aa=2
 anti_aliasing/quality/use_taa=true
-
-[input_devices]
-
-pointing/emulate_mouse_from_touch=true

@@ -40,6 +40,7 @@ uniform float frozen = 0.0;     // status: frost creeping in from the edges (Fro
 uniform float burn = 0.0;       // 0..1: the card burning away (Flame Hazard, Purge)
 uniform float sticky = 0.0;     // 1 = stuck to the table edge (Spilt Samogon): amber glaze + drips
 uniform float ink_fleck_light = 1.0; // flecks: 1 = paper showing through, 0 = dark dirt
+uniform float print_damage : hint_range(0.0, 2.0) = 1.0; // the rare big stuff: rubbed-off patches, chips, scratches
 
 // carry the CanvasItem's modulate (game.gd dims unplayable cards via modulate.a)
 // past the fragment stage, which has no MODULATE built-in
@@ -66,6 +67,33 @@ float sd_star5(vec2 p, float r, float rf) {
 	vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
 	float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, r);
 	return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
+}
+
+// Ragged blobs scattered one-per-cell, only in a few cells: `cells` per unit,
+// `odds` = share of cells that hold one, radius rmin..rmax. `p` is in
+// card-aspect units (y already stretched), so blobs come out round. Returns
+// 0..1 coverage (1 = dead centre), with `hard` sharpening the rim for chips.
+float blobs(vec2 p, float cells, float odds, float rmin, float rmax, float hard) {
+	float best = 0.0;
+	vec2 cell = floor(p * cells);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 id = cell + vec2(float(x), float(y));
+			if (hash(id * 1.37 + 4.1) > odds) {
+				continue;
+			}
+			vec2 centre = (id + vec2(hash(id + 1.7), hash(id + 9.2))) / cells;
+			float r = mix(rmin, rmax, hash(id + 5.3));
+			vec2 d = p - centre;
+			float a = hash(id + 2.9) * 6.283;
+			d = mat2(vec2(cos(a), sin(a)), vec2(-sin(a), cos(a))) * d;
+			d.x *= mix(0.55, 1.0, hash(id + 7.7)); // some smeared long, like a thumb dragged it
+			float ragged = (vnoise(p * 45.0) - 0.5) * 0.45 + (vnoise(p * 11.0) - 0.5) * 0.7;
+			float len = length(d) * (1.0 + ragged);
+			best = max(best, 1.0 - smoothstep(r * mix(0.5, 0.92, hard), r, len));
+		}
+	}
+	return best;
 }
 
 // how much ink the (inset) print has at art-uv `a`: 1 = ink, 0 = paper
@@ -162,7 +190,7 @@ void fragment() {
 			vec2 iuv = uv + seed;
 			float ink_m = 1.0 - smoothstep(0.55, 0.8, min(tex.r, min(tex.g, tex.b)));
 			float handled = vnoise(iuv * 2.2 + 7.3);                  // 0 = pristine .. 1 = rubbed
-			float wear = clamp(ink_wear * mix(0.3, 1.45, handled), 0.0, 1.0);
+			float wear = clamp(ink_wear * mix(0.35, 1.6, handled), 0.0, 1.0);
 			float patchy = step(0.55, vnoise(iuv * 9.0) * 0.6 + vnoise(iuv * 30.0) * 0.4);
 			vec3 c = tex.rgb;
 			vec3 faded_c = mix(c, vec3(dot(c, vec3(0.299, 0.587, 0.114))), 0.4) * 0.75 + vec3(0.2, 0.17, 0.13);
@@ -170,7 +198,7 @@ void fragment() {
 			// rotated + warped so the specks scatter, not line up on the noise grid
 			vec2 fp = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * iuv * 70.0;
 			fp += vec2(vnoise(iuv * 18.0), vnoise(iuv * 18.0 + 3.1)) * 2.5;
-			float fleck = step(1.0 - wear * 0.3, vnoise(fp) * 0.75 + vnoise(fp * 2.3) * 0.25);
+			float fleck = step(1.0 - wear * 0.36, vnoise(fp) * 0.75 + vnoise(fp * 2.3) * 0.25);
 			c = mix(c, mix(c * 0.55, vec3(0.86, 0.81, 0.68), ink_fleck_light), fleck * 0.8);
 			// chewed outlines: ink that sits next to paper is an edge; bite into
 			// it with fine noise, harder where the card is more handled
@@ -183,6 +211,35 @@ void fragment() {
 			float bite = step(1.0 - wear * 0.75, vnoise(bp) * 0.7 + vnoise(iuv * 40.0) * 0.3);
 			c = mix(c, vec3(1.0), step(0.5, edge) * bite);
 			tex.rgb = mix(tex.rgb, c, ink_m);
+
+			// Rare, bigger damage on top - most cards have none, some one or two:
+			//  - rubbed patches: the print worn right through to paper, a faint
+			//    ghost of the ink left in the middle, ragged at the rim
+			//  - chips: a flake of the coated surface gone, bare grey-brown
+			//    stock underneath with a dark broken rim (paper and ink alike)
+			//  - the odd scratch dragged across the print
+			if (print_damage > 0.0) {
+				vec2 dp = vec2(uv.x, uv.y * 1.452) + seed; // card aspect, so blobs are round
+				float rub = blobs(dp, 1.8, 0.2 * print_damage, 0.045, 0.12, 0.0);
+				vec3 paper = vec3(0.9, 0.86, 0.76);
+				tex.rgb = mix(tex.rgb, mix(paper, tex.rgb, 0.14), rub * ink_m);
+				float chip = blobs(dp + 31.7, 6.0, 0.05 * print_damage, 0.01, 0.024, 1.0);
+				float rim = chip * (1.0 - chip) * 4.0; // peaks at the broken edge
+				tex.rgb = mix(tex.rgb, vec3(0.66, 0.6, 0.5) * mix(0.9, 1.05, vnoise(dp * 90.0)), step(0.5, chip));
+				tex.rgb = mix(tex.rgb, tex.rgb * 0.55, rim * 0.7);
+				float h = hash(floor(seed * 7.0) + 0.37);
+				if (h < 0.3 * print_damage) { // about a third of cards carry one scratch
+					float a = hash(seed + 3.3) * 3.1416;
+					vec2 dir = vec2(cos(a), sin(a));
+					vec2 from = dp - seed - vec2(0.2 + 0.6 * hash(seed + 1.1), 0.3 + 0.85 * hash(seed + 2.2));
+					float along = dot(from, dir);
+					float across = abs(dot(from, vec2(-dir.y, dir.x)) + sin(along * 9.0) * 0.006);
+					float run = step(abs(along), 0.12 + 0.2 * hash(seed + 4.4)); // a segment, not the whole card
+					float broken = step(0.4, vnoise(vec2(along * 60.0, h * 50.0)));
+					float scratch = (1.0 - smoothstep(0.0012, 0.0032, across)) * run * broken;
+					tex.rgb = mix(tex.rgb, paper, scratch * max(ink_m, 0.35));
+				}
+			}
 		}
 
 		vec3 art = tex.rgb; // untinted print, for the frames below
