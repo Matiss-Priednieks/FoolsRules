@@ -1,20 +1,11 @@
 [gd_scene format=3 uid="uid://g3snaubia70l"]
 
-[ext_resource type="FontFile" uid="uid://ktehcoeqxyot" path="res://fonts/dm-serif.ttf" id="1_con2f"]
-[ext_resource type="Script" uid="uid://b0eqjsoqu2s8w" path="res://scripts/menu.gd" id="1_menu"]
-[ext_resource type="StyleBox" uid="uid://bksa5bcylhg45" path="res://shaders/theme_resources/button_box_hover.tres" id="2_4ytvr"]
-[ext_resource type="StyleBox" uid="uid://gdaq5n7et4s5" path="res://shaders/theme_resources/button_box.tres" id="2_mhnvy"]
-[ext_resource type="Shader" uid="uid://cah1qm0tx6qep" path="res://scenes/menu.tres" id="2_vjb58"]
-[ext_resource type="StyleBox" uid="uid://cm5e5jnexfa1q" path="res://shaders/theme_resources/button_box_pressed.tres" id="4_g3eks"]
+[ext_resource type="Script" uid="uid://b0eqjsoqu2s8w" path="res://scripts/ui/menu.gd" id="1_menu"]
+[ext_resource type="Shader" uid="uid://cah1qm0tx6qep" path="res://shaders/menu_background.tres" id="2_vjb58"]
 
 [sub_resource type="Theme" id="Theme_con2f"]
 Button/font_sizes/font_size = 40
-Button/fonts/font = ExtResource("1_con2f")
-Button/styles/hover = ExtResource("2_4ytvr")
-Button/styles/normal = ExtResource("2_mhnvy")
-Button/styles/pressed = ExtResource("4_g3eks")
 Label/font_sizes/font_size = 50
-Label/fonts/font = ExtResource("1_con2f")
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_6wigr"]
 shader = ExtResource("2_vjb58")
@@ -29,9 +20,11 @@ grow_vertical = 2
 theme = SubResource("Theme_con2f")
 script = ExtResource("1_menu")
 
-[node name="ColorRect" type="ColorRect" parent="." unique_id=1475988128]
+[node name="Background" type="CanvasLayer" parent="." unique_id=1900000010]
+layer = -10
+
+[node name="ColorRect" type="ColorRect" parent="Background" unique_id=1475988128]
 material = SubResource("ShaderMaterial_6wigr")
-layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -59,9 +52,9 @@ layout_mode = 1
 anchors_preset = 4
 anchor_top = 0.5
 anchor_bottom = 0.5
-offset_top = -152.0
+offset_top = -190.0
 offset_right = 597.0
-offset_bottom = 152.0
+offset_bottom = 190.0
 grow_vertical = 2
 
 [node name="MarginContainer" type="MarginContainer" parent="MainPanel" unique_id=1220690265]
@@ -88,6 +81,16 @@ text = "Singleplayer"
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Multiplayer"
+
+[node name="ArchiveButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=1900000070]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Card Archive"
+
+[node name="SettingsButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=1900000004]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Settings"
 
 [node name="QuitButton" type="Button" parent="MainPanel/MarginContainer/MainBox" unique_id=1709899201]
 custom_minimum_size = Vector2(0, 44)
@@ -217,3 +220,70 @@ autowrap_mode = 3
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Leave Lobby"
+
+[node name="SettingsPanel" type="CenterContainer" parent="." unique_id=1900000005]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SettingsBox" type="VBoxContainer" parent="SettingsPanel" unique_id=1900000006]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="SettingsTitle" type="Label" parent="SettingsPanel/SettingsBox" unique_id=1900000007]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "Settings"
+horizontal_alignment = 1
+
+[node name="MusicCheck" type="Button" parent="SettingsPanel/SettingsBox" unique_id=1900000008]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+toggle_mode = true
+text = "Music: On"
+
+[node name="MusicRow" type="HBoxContainer" parent="SettingsPanel/SettingsBox" unique_id=1900000009]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="MusicVolumeLabel" type="Label" parent="SettingsPanel/SettingsBox/MusicRow" unique_id=2143224594]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Volume"
+
+[node name="MusicSlider" type="HSlider" parent="SettingsPanel/SettingsBox/MusicRow" unique_id=1900000011]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+max_value = 1.0
+step = 0.01
+
+[node name="DisplayButton" type="Button" parent="SettingsPanel/SettingsBox" unique_id=1900000050]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+focus_mode = 0
+text = "Display: Borderless"
+
+[node name="SettingsBackButton" type="Button" parent="SettingsPanel/SettingsBox" unique_id=1900000012]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Back"
+
+[node name="MusicToggle" type="Button" parent="." unique_id=1900000001]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -320.0
+offset_top = 44.0
+offset_right = -60.0
+offset_bottom = 88.0
+grow_horizontal = 0
+focus_mode = 0
+toggle_mode = true
+text = "Music: On"

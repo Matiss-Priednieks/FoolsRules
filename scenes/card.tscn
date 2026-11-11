@@ -1,27 +1,38 @@
 [gd_scene format=3 uid="uid://bs3fht0e3dn2t"]
 
-[ext_resource type="Script" uid="uid://detro67fld77e" path="res://scripts/card.gd" id="1_kikvd"]
+[ext_resource type="Script" uid="uid://detro67fld77e" path="res://scripts/ui/card.gd" id="1_kikvd"]
+
+[sub_resource type="CanvasItemMaterial" id="plain"]
 
 [node name="Sprite2D" type="Sprite2D" unique_id=901492980]
 script = ExtResource("1_kikvd")
 
-[node name="SpecialBand" type="ColorRect" parent="." unique_id=1400387748]
-visible = false
-offset_left = -250.0
-offset_top = 250.0
-offset_right = 250.0
-offset_bottom = 363.0
-color = Color(0, 0, 0, 0.65)
+[node name="NameView" type="SubViewport" parent="." unique_id=1900000020]
+disable_3d = true
+transparent_bg = true
+size = Vector2i(430, 109)
+render_target_update_mode = 0
 
-[node name="SpecialLabel" type="Label" parent="." unique_id=677940702]
-visible = false
-offset_left = -250.0
-offset_top = 250.0
-offset_right = 250.0
-offset_bottom = 363.0
-theme_override_colors/font_color = Color(1, 0.83, 0.2, 1)
-theme_override_font_sizes/font_size = 56
+[node name="SpecialLabel" type="Label" parent="NameView" unique_id=677940702]
+theme_type_variation = &"CardName"
+offset_right = 430.0
+offset_bottom = 109.0
 text = "Special"
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 2
+
+[node name="RankView" type="SubViewport" parent="." unique_id=1900000060]
+disable_3d = true
+transparent_bg = true
+size = Vector2i(164, 152)
+render_target_update_mode = 0
+
+[node name="RankLabel" type="Label" parent="RankView" unique_id=1900000061]
+material = SubResource("plain")
+theme_type_variation = &"CardRank"
+offset_right = 164.0
+offset_bottom = 152.0
+text = "6"
+horizontal_alignment = 1
+vertical_alignment = 1

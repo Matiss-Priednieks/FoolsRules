@@ -1,10 +1,9 @@
 [gd_scene format=3 uid="uid://ct3vu4eosia50"]
 
-[ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://scripts/game.gd" id="1_80nbo"]
-[ext_resource type="Shader" uid="uid://dbvkbbn3cjdux" path="res://shaders/crt.gdshader" id="2_crt"]
-[ext_resource type="Shader" uid="uid://dq3oo7pbkjoxh" path="res://shaders/board_shader.tres" id="3_lbhrr"]
+[ext_resource type="Script" uid="uid://oa8sy4wcnmcm" path="res://scripts/ui/game.gd" id="1_80nbo"]
+[ext_resource type="Shader" uid="uid://dq3oo7pbkjoxh" path="res://shaders/board_background.tres" id="3_lbhrr"]
 [ext_resource type="Shader" uid="uid://66rco2vfeeqa" path="res://shaders/pixel.gdshader" id="3_pixel"]
-[ext_resource type="Theme" uid="uid://c6o6v8cxcgdms" path="res://shaders/game_theme.tres" id="5_iywne"]
+[ext_resource type="Shader" path="res://shaders/table_edge.gdshader" id="6_edge"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_pixel"]
 shader = ExtResource("3_pixel")
@@ -13,39 +12,18 @@ shader_parameter/color_steps = 48
 shader_parameter/dither_amt = 0.0
 shader_parameter/saturation = 1.0
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
-shader = ExtResource("2_crt")
-shader_parameter/curvature = 0.08
-shader_parameter/bezel = 0.004
-shader_parameter/scanline_amt = 0.15
-shader_parameter/scanline_freq = 1080.0
-shader_parameter/mask_amt = 0.1
-shader_parameter/aberration = 0.6
-shader_parameter/vignette_amt = 0.3
-shader_parameter/flicker_amt = 0.02
-shader_parameter/brightness = 1.1
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_edge"]
+shader = ExtResource("6_edge")
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_iywne"]
 shader = ExtResource("3_lbhrr")
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tooltip"]
-bg_color = Color(0.05, 0.05, 0.05, 0.9)
-content_margin_left = 10.0
-content_margin_top = 6.0
-content_margin_right = 10.0
-content_margin_bottom = 6.0
-corner_radius_top_left = 6
-corner_radius_top_right = 6
-corner_radius_bottom_right = 6
-corner_radius_bottom_left = 6
 
 [node name="Node2D" type="Node2D" unique_id=1010798659]
 script = ExtResource("1_80nbo")
 pixelate_enabled = false
 talon_pos = Vector2(250, 150)
 discard_pos = Vector2(1690, 800)
-table_drop_rect = Rect2(500, 350, 1200, 600)
-deflect_strip_rect = Rect2(600, 232, 600, 96)
+table_drop_rect = Rect2(360, 270, 1200, 560)
 
 [node name="Pixelate" type="CanvasLayer" parent="." unique_id=1139313725]
 layer = 120
@@ -59,16 +37,10 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="CRT" type="CanvasLayer" parent="." unique_id=1537960929]
-layer = 128
 
-[node name="Screen" type="ColorRect" parent="CRT" unique_id=1053482806]
-material = SubResource("ShaderMaterial_crt")
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="TableEdge" type="ColorRect" parent="." unique_id=1900000030]
+z_index = -1
+material = SubResource("ShaderMaterial_edge")
 mouse_filter = 2
 
 [node name="SlotLayer" type="Node2D" parent="." unique_id=1297410799]
@@ -102,6 +74,7 @@ size_flags_vertical = 3
 mouse_filter = 2
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=405685605]
+layer = 2
 
 [node name="Root" type="Control" parent="UI" unique_id=1706940540]
 layout_mode = 3
@@ -111,80 +84,72 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme = ExtResource("5_iywne")
 
-[node name="StatusLabel" type="Label" parent="UI/Root" unique_id=1285511766]
+[node name="TurnBanner" type="Label" parent="UI/Root" unique_id=1285511766]
+visible = false
+theme_type_variation = &"TurnBannerAttack"
 layout_mode = 0
-offset_left = 24.0
-offset_top = 18.0
-offset_right = 25.0
-offset_bottom = 41.0
-theme_override_font_sizes/font_size = 22
 
 [node name="EffectToast" type="Label" parent="UI/Root" unique_id=700000010]
+theme_type_variation = &"Toast"
 layout_mode = 0
 offset_left = 610.0
 offset_top = 372.0
 offset_right = 1310.0
 offset_bottom = 414.0
-theme_override_colors/font_color = Color(1, 0.83, 0.2, 1)
-theme_override_font_sizes/font_size = 22
 horizontal_alignment = 1
 autowrap_mode = 2
 
-[node name="CardTooltip" type="Label" parent="UI/Root" unique_id=700000011]
+[node name="CardTooltip" type="VBoxContainer" parent="UI/Root" unique_id=700000011]
 visible = false
+z_index = 10
 layout_mode = 0
-custom_minimum_size = Vector2(300, 0)
-theme_override_styles/normal = SubResource("StyleBoxFlat_tooltip")
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 20
-autowrap_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
 
 [node name="ReserveLabel" type="Label" parent="UI/Root" unique_id=700000012]
+visible = false
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
 offset_left = 24.0
 offset_top = 792.0
-offset_right = 500.0
+offset_right = 25.0
 offset_bottom = 818.0
-theme_override_colors/font_color = Color(0.7, 0.85, 1, 1)
-theme_override_font_sizes/font_size = 18
 
 [node name="TalonLabel" type="Label" parent="UI/Root" unique_id=477028202]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
 offset_right = 220.0
 offset_bottom = 23.0
-theme_override_colors/font_color = Color(1, 1, 1, 0.5)
-theme_override_font_sizes/font_size = 18
-text = "Talon"
+text = "TALON"
 horizontal_alignment = 1
 
 [node name="DiscardLabel" type="Label" parent="UI/Root" unique_id=1059844456]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
 offset_right = 220.0
 offset_bottom = 23.0
-theme_override_colors/font_color = Color(1, 1, 1, 0.5)
-theme_override_font_sizes/font_size = 18
-text = "Discard"
+text = "DISCARD"
 horizontal_alignment = 1
 
 [node name="SeatLabel0" type="Label" parent="UI/Root" unique_id=899156273]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
-theme_override_font_sizes/font_size = 18
 
 [node name="SeatLabel1" type="Label" parent="UI/Root" unique_id=173272070]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
-theme_override_font_sizes/font_size = 18
 
 [node name="SeatLabel2" type="Label" parent="UI/Root" unique_id=2136284351]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
-theme_override_font_sizes/font_size = 18
 
 [node name="SeatLabel3" type="Label" parent="UI/Root" unique_id=497724949]
+theme_type_variation = &"SeatPlate"
 layout_mode = 0
-theme_override_font_sizes/font_size = 18
 
 [node name="HandSortButton" type="Button" parent="UI/Root" unique_id=447457653]
+theme_type_variation = &"SmallButton"
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
@@ -195,7 +160,6 @@ offset_right = 426.0
 offset_bottom = -94.00018
 grow_vertical = 0
 focus_mode = 0
-theme_override_font_sizes/font_size = 16
 text = "Sort: Rank"
 
 [node name="ConfirmButton" type="Button" parent="UI/Root" unique_id=1986319085]
@@ -206,7 +170,6 @@ offset_top = 610.0
 offset_right = 1670.0
 offset_bottom = 670.0
 focus_mode = 0
-theme_override_font_sizes/font_size = 22
 text = "Confirm"
 
 [node name="TakeButton" type="Button" parent="UI/Root" unique_id=65923281]
@@ -217,7 +180,6 @@ offset_top = 690.0
 offset_right = 1670.0
 offset_bottom = 750.0
 focus_mode = 0
-theme_override_font_sizes/font_size = 22
 text = "Take"
 
 [node name="PassButton" type="Button" parent="UI/Root" unique_id=1025663117]
@@ -228,10 +190,10 @@ offset_top = 770.0
 offset_right = 1670.0
 offset_bottom = 830.0
 focus_mode = 0
-theme_override_font_sizes/font_size = 22
 text = "Pass"
 
-[node name="DeflectStrip" type="ColorRect" parent="UI/Root" unique_id=1656366528]
+[node name="DeflectStrip" type="Panel" parent="UI/Root" unique_id=1656366528]
+theme_type_variation = &"PassSlot"
 visible = false
 layout_mode = 0
 offset_left = 660.0
@@ -239,29 +201,32 @@ offset_top = 232.0
 offset_right = 1260.0
 offset_bottom = 328.0
 mouse_filter = 2
-color = Color(0.9, 0.75, 0.2, 0.22)
 
 [node name="StripLabel" type="Label" parent="UI/Root/DeflectStrip" unique_id=1067842741]
-layout_mode = 0
-offset_right = 600.0
-offset_bottom = 96.0
-theme_override_font_sizes/font_size = 20
-text = "▲  drop here — pass the attack on"
+theme_type_variation = &"HudLabel"
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "pass
+▶"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="PauseButton" type="Button" parent="UI/Root" unique_id=700000001]
+theme_type_variation = &"SmallButton"
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -140.0
-offset_top = 18.0
-offset_right = -24.0
-offset_bottom = 54.0
+offset_left = -184.0
+offset_top = 40.0
+offset_right = -68.0
+offset_bottom = 76.0
 grow_horizontal = 0
 focus_mode = 0
-theme_override_font_sizes/font_size = 18
 text = "☰ Menu"
 
 [node name="PauseOverlay" type="Control" parent="UI/Root" unique_id=700000002]
@@ -283,44 +248,66 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0, 0, 0, 0.35)
 
-[node name="Title" type="Label" parent="UI/Root/PauseOverlay" unique_id=700000004]
-layout_mode = 0
-offset_top = 340.0
-offset_right = 1920.0
-offset_bottom = 412.0
-theme_override_font_sizes/font_size = 48
+
+[node name="Panel" type="PanelContainer" parent="UI/Root/PauseOverlay" unique_id=1900000040]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -230.0
+offset_right = 230.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"PlatePanel"
+
+[node name="Box" type="VBoxContainer" parent="UI/Root/PauseOverlay/Panel" unique_id=1900000041]
+layout_mode = 2
+theme_override_constants/separation = 18
+alignment = 1
+
+[node name="Title" type="Label" parent="UI/Root/PauseOverlay/Panel/Box" unique_id=700000004]
+layout_mode = 2
+theme_type_variation = &"Title"
 text = "Menu"
 horizontal_alignment = 1
 
-[node name="ResumeButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000005]
-layout_mode = 0
-offset_left = 800.0
-offset_top = 460.0
-offset_right = 1120.0
-offset_bottom = 528.0
+[node name="ResumeButton" type="Button" parent="UI/Root/PauseOverlay/Panel/Box" unique_id=700000005]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 64)
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
 text = "Back to Game"
 
-[node name="RestartButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000006]
-layout_mode = 0
-offset_left = 800.0
-offset_top = 546.0
-offset_right = 1120.0
-offset_bottom = 614.0
+[node name="RestartButton" type="Button" parent="UI/Root/PauseOverlay/Panel/Box" unique_id=700000006]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 64)
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
 text = "Restart"
 
-[node name="QuitButton" type="Button" parent="UI/Root/PauseOverlay" unique_id=700000007]
-layout_mode = 0
-offset_left = 800.0
-offset_top = 632.0
-offset_right = 1120.0
-offset_bottom = 700.0
+[node name="QuitButton" type="Button" parent="UI/Root/PauseOverlay/Panel/Box" unique_id=700000007]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 64)
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
 text = "Main Menu"
+
+[node name="MusicRow" type="HBoxContainer" parent="UI/Root/PauseOverlay/Panel/Box" unique_id=1900000042]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="MusicLabel" type="Label" parent="UI/Root/PauseOverlay/Panel/Box/MusicRow" unique_id=1900000002]
+layout_mode = 2
+theme_type_variation = &"HudLabel"
+text = "Music"
+
+[node name="MusicSlider" type="HSlider" parent="UI/Root/PauseOverlay/Panel/Box/MusicRow" unique_id=1900000003]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+size_flags_horizontal = 3
+size_flags_vertical = 4
+focus_mode = 0
+max_value = 1.0
+step = 0.01
 
 [node name="DraftOverlay" type="Control" parent="UI/Root" unique_id=700000013]
 visible = false
@@ -342,21 +329,20 @@ mouse_filter = 2
 color = Color(0, 0, 0, 0.55)
 
 [node name="Title" type="Label" parent="UI/Root/DraftOverlay" unique_id=700000015]
+theme_type_variation = &"Heading"
 layout_mode = 0
 offset_top = 260.0
 offset_right = 1920.0
 offset_bottom = 316.0
-theme_override_font_sizes/font_size = 36
 text = "Draft - pick one"
 horizontal_alignment = 1
 
 [node name="Countdown" type="Label" parent="UI/Root/DraftOverlay" unique_id=700000016]
+theme_type_variation = &"Toast"
 layout_mode = 0
 offset_top = 320.0
 offset_right = 1920.0
 offset_bottom = 350.0
-theme_override_colors/font_color = Color(1, 0.83, 0.2, 1)
-theme_override_font_sizes/font_size = 20
 horizontal_alignment = 1
 
 [node name="EndScreen" type="ColorRect" parent="UI/Root" unique_id=1994760652]
@@ -367,19 +353,19 @@ offset_bottom = 1080.0
 color = Color(0.03, 0.05, 0.04, 0.78)
 
 [node name="EndTitle" type="Label" parent="UI/Root/EndScreen" unique_id=2146767570]
+theme_type_variation = &"Title"
 layout_mode = 0
 offset_top = 300.0
 offset_right = 1920.0
 offset_bottom = 380.0
-theme_override_font_sizes/font_size = 56
 horizontal_alignment = 1
 
 [node name="EndStandings" type="Label" parent="UI/Root/EndScreen" unique_id=1613175854]
+theme_type_variation = &"Subheading"
 layout_mode = 0
 offset_top = 430.0
 offset_right = 1920.0
 offset_bottom = 650.0
-theme_override_font_sizes/font_size = 28
 horizontal_alignment = 1
 
 [node name="AgainButton" type="Button" parent="UI/Root/EndScreen" unique_id=1844947514]
@@ -389,7 +375,6 @@ offset_top = 700.0
 offset_right = 1120.0
 offset_bottom = 772.0
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
 text = "Play again  (Space)"
 
 [node name="MenuButton" type="Button" parent="UI/Root/EndScreen" unique_id=1767252180]
@@ -399,5 +384,5 @@ offset_top = 786.0
 offset_right = 1120.0
 offset_bottom = 858.0
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
 text = "Main menu"
+
