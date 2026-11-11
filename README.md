@@ -4,7 +4,7 @@
 
 Fool's Rules is a card roguelike built on top of Durak. The base game is simple: get rid of all your cards, and don't be the last one holding any. The last player left with cards is the *durak*, the fool. On top of that we've thrown in 33 special cards that bend the rules, plus a Joker, curses hidden in the deck, and hazards that set cards on fire or freeze them solid.
 
-It all happens on a worn green felt table on a flickering old TV, in a Soviet post-apocalyptic setting. Every visual in the game is made with code and shaders, with no AI-generated art.
+It all happens on a worn green felt table on a flickering old TV, in a Soviet post-apocalyptic setting. Every visual in the game is made with code and shaders, with no AI-generated art, and all the sound and music is recorded and made by hand.
 
 ![The main menu](docs/screenshots/menu.jpg)
 
@@ -79,6 +79,10 @@ godot --headless --script res://scripts/tests/test_durak.gd
 | `scripts/autoload` | Always-on stuff: Steam, networking, music and sound, the CRT effect, settings. |
 | `shaders` | Card wear, the CRT, dither, worn panels and the rest of the look. |
 | `scenes`, `themes`, `assets` | Scenes, the UI theme, and card art, fonts and audio. |
+
+## Sound and music
+
+Every sound and every bit of music in the game is homemade. The sound effects were recorded on a mic (yes, the card shuffles and the pen clicks are real), and the music was made in FL Studio.
 
 ## Status
 
