@@ -190,7 +190,17 @@ void fragment() {
 			vec2 iuv = uv + seed;
 			float ink_m = 1.0 - smoothstep(0.55, 0.8, min(tex.r, min(tex.g, tex.b)));
 			float handled = vnoise(iuv * 2.2 + 7.3);                  // 0 = pristine .. 1 = rubbed
-			float wear = clamp(ink_wear * mix(0.35, 1.6, handled), 0.0, 1.0);
+			// The corner indices (rank + the small suit pip under it, both
+			// corners) have to stay readable: wear eases off there and the big
+			// damage below barely touches them. 0 = elsewhere, 1 = in a corner.
+			vec2 cuv = (uv - 0.5) / print_inset + 0.5;
+			vec2 cflip = vec2(1.0) - cuv;
+			const vec2 IDX_MIN = vec2(0.015, 0.01);
+			const vec2 IDX_MAX = vec2(0.2, 0.21);
+			float corner = max(
+				step(IDX_MIN.x, cuv.x) * step(cuv.x, IDX_MAX.x) * step(IDX_MIN.y, cuv.y) * step(cuv.y, IDX_MAX.y),
+				step(IDX_MIN.x, cflip.x) * step(cflip.x, IDX_MAX.x) * step(IDX_MIN.y, cflip.y) * step(cflip.y, IDX_MAX.y));
+			float wear = clamp(ink_wear * mix(0.35, 1.6, handled), 0.0, 1.0) * mix(1.0, 0.55, corner);
 			float patchy = step(0.55, vnoise(iuv * 9.0) * 0.6 + vnoise(iuv * 30.0) * 0.4);
 			vec3 c = tex.rgb;
 			vec3 faded_c = mix(c, vec3(dot(c, vec3(0.299, 0.587, 0.114))), 0.4) * 0.75 + vec3(0.2, 0.17, 0.13);
@@ -220,12 +230,13 @@ void fragment() {
 			//  - the odd scratch dragged across the print
 			if (print_damage > 0.0) {
 				vec2 dp = vec2(uv.x, uv.y * 1.452) + seed; // card aspect, so blobs are round
-				float rub = blobs(dp, 1.8, 0.2 * print_damage, 0.045, 0.12, 0.0);
+				float spare = mix(1.0, 0.15, corner); // keep the corner indices legible
+				float rub = blobs(dp, 1.8, 0.2 * print_damage, 0.045, 0.12, 0.0) * spare;
 				vec3 paper = vec3(0.9, 0.86, 0.76);
 				tex.rgb = mix(tex.rgb, mix(paper, tex.rgb, 0.14), rub * ink_m);
 				float chip = blobs(dp + 31.7, 6.0, 0.05 * print_damage, 0.01, 0.024, 1.0);
-				float rim = chip * (1.0 - chip) * 4.0; // peaks at the broken edge
-				tex.rgb = mix(tex.rgb, vec3(0.66, 0.6, 0.5) * mix(0.9, 1.05, vnoise(dp * 90.0)), step(0.5, chip));
+				float rim = chip * (1.0 - chip) * 4.0 * spare; // peaks at the broken edge
+				tex.rgb = mix(tex.rgb, vec3(0.66, 0.6, 0.5) * mix(0.9, 1.05, vnoise(dp * 90.0)), step(0.5, chip) * spare);
 				tex.rgb = mix(tex.rgb, tex.rgb * 0.55, rim * 0.7);
 				float h = hash(floor(seed * 7.0) + 0.37);
 				if (h < 0.3 * print_damage) { // about a third of cards carry one scratch
@@ -237,7 +248,7 @@ void fragment() {
 					float run = step(abs(along), 0.12 + 0.2 * hash(seed + 4.4)); // a segment, not the whole card
 					float broken = step(0.4, vnoise(vec2(along * 60.0, h * 50.0)));
 					float scratch = (1.0 - smoothstep(0.0012, 0.0032, across)) * run * broken;
-					tex.rgb = mix(tex.rgb, paper, scratch * max(ink_m, 0.35));
+					tex.rgb = mix(tex.rgb, paper, scratch * max(ink_m, 0.35) * spare);
 				}
 			}
 		}
