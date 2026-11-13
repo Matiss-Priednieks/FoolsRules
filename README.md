@@ -2,7 +2,7 @@
 
 **Durak, the old Russian card game, but the deck has started fighting back.**
 
-Fool's Rules is a card roguelike built on top of Durak. The base game is simple: get rid of all your cards, and don't be the last one holding any. The last player left with cards is the *durak*, the fool. On top of that we've thrown in 33 special cards that bend the rules, plus a Joker, curses hidden in the deck, and hazards that set cards on fire or freeze them solid.
+Fool's Rules is Durak with a mean streak. The base game is simple: get rid of all your cards, and don't be the last one holding any. The last player left with cards is the *durak*, the fool. On top of that we've thrown in 33 special cards that bend the rules, plus a Joker, curses hidden in the deck, and hazards that set cards on fire or freeze them solid. It's at its best with a few friends around the table, all trying to make sure somebody else ends up the fool.
 
 It all happens on a worn green felt table on a flickering old TV, in a Soviet post-apocalyptic setting. Every visual in the game is made with code and shaders, with no AI-generated art, and all the sound and music is recorded and made by hand.
 
@@ -18,10 +18,10 @@ It all happens on a worn green felt table on a flickering old TV, in a Soviet po
   - **Tricks** let you cheat a little: peek, rig the deck, swap or steal.
   - **Curses** are bad cards hidden in the deck. Get rid of them fast.
   - **Hazards** are fire, fallout and frost. They burn, poison or freeze the cards themselves.
-- **The Joker.** Unbeatable in defence, one per game. Just don't get stuck holding it last.
+- **The Joker.** Beats anything in defence and stops anyone throwing in more cards. One per game. Just don't get stuck holding it last.
 - **A draft.** Every so often the table pauses and everyone picks a special card for their reserve, a little shelf of cards that feeds into your next refills.
 - **The Card Archive.** A binder with every card in the game. Flip through it and have a close look at each one.
-- **Multiplayer over Steam**, with lobbies and invite codes.
+- **Multiplayer over Steam**, with lobbies and invite codes. If someone drops out, a bot keeps their seat warm until they rejoin.
 - **Android version** (single-player). Hold your finger on a card to read it.
 
 ## Screenshots
