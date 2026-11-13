@@ -186,6 +186,7 @@ var _refill_priority_seat: int = -1           # this seat refills first, this ro
 var _refill_last_seat: int = -1               # this seat refills last, this round only
 var _throw_in_locked: Dictionary = {}         # seat -> true: no attack/throw-in this bout
 var _throw_in_locked_next: Dictionary = {}    # queued to activate next bout (Muzzle: "next round")
+var joker_shut := false                       # the Joker went down this bout: no more attacks or throw-ins
 var _refill_from_discard: Dictionary = {}     # seat -> true: refills from the discard this round (Black Market)
 var _denounced_seat: int = -1                 # defends the next bout (Denunciation), -1 = none
 var _last_throw_in_special: StringName = &""  # most recent special thrown in with a throw-in effect (Samizdat)
@@ -314,6 +315,8 @@ func get_legal_actions(seat: int) -> Array[Dictionary]:
 
 	# bout in progress (defender is beating cards off or taking): throw in a card
 	# of a rank already on the table, or pass
+	if joker_shut:
+		return actions
 	if _can_add_attack(seat) and not _throw_in_locked.has(seat):
 		var ranks_on_table := _table_ranks()
 		var any_rank: bool = effects != null and effects.any_rank_throw_in(self)  # Blackout
@@ -801,14 +804,12 @@ func _apply_defend(seat: int, card: CardData, target: int) -> void:
 	_reopen_pass_for_new_ranks(ranks_before)
 	state_changed.emit()
 	_fire(Trigger.ON_DEFENSE_PLAYED, [card], {seat = seat, card = card, target = target})
-	if card.special == &"joker" and phase == Phase.DEFEND:
-		# spec 5 + 8.2: the Joker ends the attack on the spot - no more
-		# throw-ins. The pile is discarded only if every attack is beaten;
-		# anything still unbeaten means the defender picks the lot up.
-		var picked_up := _unbeaten_count() > 0
-		effect_log.append("Joker ends the attack" + (" - but P%d must pick up what's unbeaten" % seat if picked_up else ""))
-		_resolve_bout(picked_up)
-		return
+	if card.special == &"joker" and phase == Phase.DEFEND and not joker_shut:
+		# The Joker beats its card like any other defence and shuts the attack:
+		# nobody may attack or throw in for the rest of this bout. Whatever is
+		# still open has to be beaten (or taken) as normal.
+		joker_shut = true
+		effect_log.append("Joker shuts the attack: no more throw-ins")
 	_maybe_resolve_defense()
 
 
@@ -924,6 +925,8 @@ func _maybe_resolve_taking() -> void:
 
 
 func _someone_may_still_attack() -> bool:
+	if joker_shut:
+		return false
 	for seat in num_players:
 		if seat == defender or is_out[seat] or hands[seat].is_empty():
 			continue
@@ -981,6 +984,7 @@ func _resolve_bout(defender_took: bool) -> void:
 	# start, not the one that just ended - this is the boundary between them.
 	_throw_in_locked = _throw_in_locked_next
 	_throw_in_locked_next = {}
+	joker_shut = false
 
 	# Spec 4.2/4.3: offered before refill, while "holding the most cards" is
 	# most meaningful (refill normalizes everyone back toward target) - and

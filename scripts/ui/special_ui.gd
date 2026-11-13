@@ -289,6 +289,8 @@ func refresh() -> void:
 			continue
 		_badges[seat] = _badge_column(tags, chips, seat)
 	var table_tags: Array[String] = []
+	if g.game.joker_shut:
+		table_tags.append("JOKER: NO THROW-INS")
 	if g.game._turn_direction < 0:
 		table_tags.append("PLAY REVERSED")
 	if Array(g.game._turn_order) != range(g.game.num_players):

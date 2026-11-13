@@ -55,15 +55,15 @@ func configure_multiplayer(seat_map: Dictionary, names: Dictionary, my_steam_id:
 			local_seat = seat
 
 
-## No-Steam local test transport (see menu.gd's --lan-host / --lan-join): a
-## fixed 2-player setup, host always seat 0, the one guest always seat 1.
-func configure_lan_test(seat: int) -> void:
+## No-Steam local test transport (see menu.gd's --lan-host / --lan-join):
+## host always seat 0, each guest the seat it asked for. Every seat is a
+## person; a guest that never shows up (or drops) is handed to a bot.
+func configure_lan_test(seat: int, players := 2) -> void:
 	active = true
-	seed = 918273645 # fixed - both sides just need to match, not be unpredictable
-	_reset(2)
+	seed = 918273645 # fixed - every side just needs to match, not be unpredictable
+	_reset(players)
 	local_seat = seat
-	seat_is_bot[0] = false
-	seat_is_bot[1] = false
-	player_names[0] = "Host"
-	player_names[1] = "Guest"
-	seat_peer_id[0] = 1 # ENet server is always peer id 1; index 1 fills in once the guest connects
+	for s in num_players:
+		seat_is_bot[s] = false
+		player_names[s] = "Host" if s == 0 else "Guest %d" % s
+	seat_peer_id[0] = 1 # ENet server is always peer id 1; guests fill theirs in when they report in

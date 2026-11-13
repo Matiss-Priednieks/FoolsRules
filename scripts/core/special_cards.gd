@@ -59,7 +59,7 @@ const DEFS := {
 	# --- The Joker: the one rankless card, the power ceiling (spec 5) ----
 	&"joker": {
 		name = "Joker", family = Family.JOKER, trigger = &"on_defense_played",
-		rank_hint = 0, note = "unbeatable in defence, ends the attack; cannot go out on it",
+		rank_hint = 0, note = "unbeatable in defence; once it's down, nobody can throw in for the rest of the attack. Cannot go out on it",
 	},
 
 	# --- Economy (spec 5) --------------------------------------------------

@@ -22,16 +22,18 @@ static func pick(game: DurakGame, excluded_seats: Array = []) -> Dictionary:
 	# otherwise never bubble up through the priority chain below.
 	var drafts := actions.filter(func(action): return action.type == "draft_pick")
 	if not drafts.is_empty():
-		# Any randomness here MUST go through game._rng, not global random -
-		# bots run identically on every multiplayer peer from the same replayed
-		# action stream, and reserve strategy is deferred smartness (see the
+		# Plain randi(), NOT game._rng: bots only run on the host, and their
+		# pick reaches everyone as an ordinary move. Drawing from the shared
+		# game RNG here advanced the host's sequence alone, so the next random
+		# effect (Palm, Holdout, a shuffle) came out different on every other
+		# machine - a desync. Reserve strategy is deferred smartness (see the
 		# class doc), so a uniform random pick is the honest placeholder.
-		return drafts[game._rng.randi_range(0, drafts.size() - 1)]
+		return drafts[randi_range(0, drafts.size() - 1)]
 		# A pending special_choice (Palm/Singleout/Stack/Forge) blocks the whole
 		# table exactly like a draft pick does - same ambient-tier treatment.
 	var specials := actions.filter(func(action): return action.type == "special_choice")
 	if not specials.is_empty():
-		return specials[game._rng.randi_range(0, specials.size() - 1)]
+		return specials[randi_range(0, specials.size() - 1)] # plain randi(): see the draft pick above
 
 	# 1. Beat the attack with the cheapest card that does the job.
 	var defends := actions.filter(func(action): return action.type == "defend")

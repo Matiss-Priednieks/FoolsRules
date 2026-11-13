@@ -119,6 +119,8 @@ var _discard_stack: Array[Sprite2D] = []
 var _game_id := 0 # bumped per game; a stale coroutine bails on mismatch
 var _turn_epoch := 0 # bumped when the human acts; the bot loop bails on mismatch
 var _busy := false # an _apply_and_animate() is mid-flight
+var _busy_since := 0.0 # when it went busy, for the stuck-animation watchdog
+const BUSY_WATCHDOG := 20.0
 var _waiting_for_human := false # the human has at least one legal move right now
 var _move_pending := false # human has laid ≥1 card this turn, not yet released to the bots
 var _awaiting_ack := false # multiplayer client: our own action is in flight to the host
@@ -150,17 +152,12 @@ func _ready() -> void:
 		human_seat = -1 # plain headless run: the self-play smoke test
 	elif NetSession.active:
 		human_seat = NetSession.local_seat # launched from a multiplayer lobby or LAN test
-		var live := multiplayer.has_multiplayer_peer()
-		print("[net] multiplayer game: seat=%d authority=%s live_peer=%s unique_id=%d status=%d" % [
-			human_seat, _is_authority(), live,
-			multiplayer.get_unique_id() if live else 0,
-			multiplayer.multiplayer_peer.get_connection_status() if live else -1])
+		print("[net] multiplayer game: seat=%d host=%s mode=%d" % [human_seat, _is_authority(), Net.mode])
 		SteamLobby.disconnected_unexpectedly.connect(_on_disconnected_unexpectedly)
-		if not live and not _headless:
-			# the peer never came up (see steam_lobby.gd _start_peer failure) -
-			# don't drop the player into an unplayable board
-			_on_disconnected_unexpectedly.call_deferred("Couldn't connect. Back to the menu.")
-			return
+		Net.message.connect(_on_net_message)
+		Net.member_left.connect(_on_member_left)
+		Net.host_changed.connect(_on_host_changed)
+		_last_host_key = Net.host_key()
 		if _headless:
 			# Neither a headless host nor a headless client has a UI to drag
 			# cards with, so both need a stand-in for OUR seat specifically -
@@ -208,7 +205,12 @@ func _ready() -> void:
 	_build_log()
 
 	RenderingServer.set_default_clear_color(Color(0.05, 0.22, 0.12))
-	if _headless:
+	if _headless and NetSession.active and _is_authority() and "--real-pregame" in OS.get_cmdline_user_args():
+		_pregame() # test: the real ready-up/countdown a windowed host runs
+	elif _headless and NetSession.active and not _is_authority():
+		_client_announce_ready() # a headless guest asks the host in, same as a real one
+	elif _headless:
+		_pregame_started = true # no pre-game screen: a player who reports in just gets the move log
 		_new_game() # tests / headless LAN runs: no pre-game screen, deal at once
 	else:
 		_pregame()
@@ -373,6 +375,9 @@ func _run_countdown(seconds := pregame_seconds) -> void:
 		print("[net] pregame: everyone ready, counting down (bots for %s)" % [_botified])
 	for seat in _botified:
 		NetSession.seat_is_bot[seat] = true
+	if _pregame_overlay == null: # headless guest: no screen to count down on
+		_new_game()
+		return
 	_pregame_actions.visible = false
 	_pregame_title.text = "Shuffling the deck..." if not NetSession.active else "Everyone's in"
 	_refresh_pregame_rows()
@@ -392,38 +397,58 @@ func _run_countdown(seconds := pregame_seconds) -> void:
 
 # --- multiplayer handshake (host is the authority, same as for actions)
 
-## Client: keep telling the host we're loaded until it starts the game - the
-## host's own board may still be loading, and an RPC to a node that doesn't
-## exist yet is simply lost.
+## Client: keep telling the host we're loaded until it answers - its board
+## may still be loading. It answers with "start" (everyone's in) or "sync"
+## (the game's already going: here's every move so far).
 func _client_announce_ready() -> void:
 	while not _pregame_started and is_inside_tree():
-		if _host_reachable():
-			net_client_ready.rpc_id(1)
+		if Net.host_reachable():
+			Net.send_to_host({t = "ready", seat = human_seat})
 		await get_tree().create_timer(1.0).timeout
 
 
-@rpc("any_peer", "call_remote", "reliable")
-func net_client_ready() -> void:
-	if not _is_authority():
+## Host: a player's board loaded. Before the start that's a ready-up; after it,
+## they're late or coming back, so they get the whole game so far.
+func _host_on_ready(sender: int, msg: Dictionary) -> void:
+	var seat := _seat_of(sender, msg)
+	if seat < 0:
 		return
-	var sender := multiplayer.get_remote_sender_id()
-	if _pregame_started: # already under way (e.g. they were replaced by a bot) - unstick them
-		net_start.rpc_id(sender, _botified)
+	if _pregame_started:
+		Net.send_to(sender, {t = "sync", botified = _botified, bots = NetSession.seat_is_bot, log = _action_log})
+		if NetSession.seat_is_bot[seat] and game != null:
+			_set_seat_bot(seat, false) # back from a drop: their seat again
 		return
-	var seat := _seat_for_peer(sender)
-	if seat >= 0 and not _ready_seats.has(seat):
+	if not _ready_seats.has(seat):
 		_ready_seats[seat] = true
 		print("[net] pregame: seat %d loaded" % seat)
 	_host_check_ready()
 
 
+## Steam seats whose player isn't in the lobby any more (they left between
+## Start and loading in) - nobody would ever hear about them leaving.
+func _absent_seats() -> Array:
+	var out: Array = []
+	if Net.mode != Net.Mode.STEAM:
+		return out
+	var here: Array = SteamLobby.members.map(func(m): return m.steam_id)
+	for seat in NetSession.num_players:
+		var sid: int = NetSession.seat_steam_id[seat]
+		if sid != 0 and not NetSession.seat_is_bot[seat] and sid not in here:
+			out.append(seat)
+	return out
+
+
 func _host_check_ready() -> void:
+	for seat in _absent_seats(): # gone before they loaded: a bot plays for them
+		if seat not in _botified:
+			_botified.append(seat)
+		NetSession.seat_is_bot[seat] = true
 	_refresh_pregame_rows()
-	if multiplayer.has_multiplayer_peer():
-		net_ready_state.rpc(_ready_seats.keys())
+	Net.broadcast({t = "ready_state", seats = _ready_seats.keys()})
 	for seat in NetSession.num_players:
 		if not _seat_ready(seat):
-			_pregame_status.text = "Waiting for everyone's game to load..."
+			if _pregame_status != null:
+				_pregame_status.text = "Waiting for everyone's game to load..."
 			return
 	_host_start()
 
@@ -432,8 +457,7 @@ func _host_start() -> void:
 	if _pregame_started:
 		return
 	_pregame_started = true
-	if multiplayer.has_multiplayer_peer():
-		net_start.rpc(_botified)
+	Net.broadcast({t = "start", botified = _botified})
 	_run_countdown()
 
 
@@ -459,15 +483,7 @@ func _host_wait_timeout() -> void:
 	_pregame_actions.visible = true
 
 
-@rpc("authority", "call_remote", "reliable")
-func net_ready_state(seats: Array) -> void:
-	for seat in seats:
-		_ready_seats[seat] = true
-	_refresh_pregame_rows()
-
-
-@rpc("authority", "call_remote", "reliable")
-func net_start(botified: Array) -> void:
+func _client_on_start(botified: Array) -> void:
 	if _pregame_started:
 		return
 	_pregame_started = true
@@ -475,11 +491,42 @@ func net_start(botified: Array) -> void:
 	_run_countdown()
 
 
+## Late join / rejoin / a gap: the host's whole move log. A fresh board replays
+## it instantly (no animation) and carries on from there.
+func _client_on_sync(msg: Dictionary) -> void:
+	var bots: Array = msg.get("bots", [])
+	for seat in mini(bots.size(), NetSession.seat_is_bot.size()):
+		NetSession.seat_is_bot[seat] = bool(bots[seat])
+	NetSession.seat_is_bot[human_seat] = false
+	var log: Array = msg.get("log", [])
+	if msg.get("rebuild", false):
+		_rebuilding = false
+		_clear_board()
+		_new_game(log)
+		print("[net] rebuilt from the host's %d moves" % log.size())
+		if _headless:
+			_run_client_autoplay.call_deferred() # the test stand-in follows the new board
+		return
+	if not _pregame_started:
+		_pregame_started = true
+		_botified = msg.get("botified", [])
+		if log.is_empty():
+			_run_countdown() # the host is only just dealing - start like everyone else
+			return
+		if is_instance_valid(_pregame_overlay):
+			_pregame_overlay.queue_free()
+		_new_game(log)
+		return
+	_queue_acts(0, log) # already playing: it just fills whatever we're missing
+
+
 # ---------------------------------------------------------------- game lifecycle
 
-func _new_game() -> void:
+func _new_game(replay: Array = []) -> void:
 	if NetSession.active:
-		print("[net] dealing")
+		print("[net] dealing" if replay.is_empty() else "[net] rejoining: replaying %d moves" % replay.size())
+	_action_log = []
+	_incoming_acts.clear()
 	_game_id += 1
 	_turn_epoch += 1
 	_busy = false
@@ -498,6 +545,21 @@ func _new_game() -> void:
 	_special_ui.reset()
 	_ensure_seat_labels(game.num_players)
 	game.game_over.connect(_on_game_over)
+	if NetSession.active and _is_authority():
+		for seat in _absent_seats(): # (a headless host deals without a pre-game check)
+			_set_seat_bot.call_deferred(seat, true)
+	if not replay.is_empty():
+		for wire in replay:
+			var action := _resolve_wire_action(wire, int(wire.get("player", -1)))
+			if action.is_empty():
+				push_error("[net] DESYNC replaying %s | %s" % [wire, _state_debug()])
+				_bail_desync()
+				return
+			game.apply_action(action)
+			_action_log.append(wire)
+		_resync()
+		_drain_incoming_acts()
+		return
 	_deal_out() # animate the deal, then settle + hand off to the bots
 
 
@@ -523,6 +585,7 @@ func _deal_order() -> Array[int]:
 func _deal_out() -> void:
 	var run_id := _game_id
 	_busy = true
+	_busy_since = Time.get_ticks_msec() / 1000.0
 
 	if _headless:
 		_busy = false
@@ -573,8 +636,11 @@ func _deal_out() -> void:
 
 
 func _to_menu() -> void:
-	if NetSession.active:
+	if NetSession.active and SteamLobby.in_lobby and game != null and game.is_finished():
+		SteamLobby.back_to_room() # match over: same lobby, another round
+	elif NetSession.active:
 		SteamLobby.leave() # no-op for a LAN test (never touched SteamLobby)
+		Net.stop()
 		multiplayer.multiplayer_peer = null # tears down a LAN test's ENet peer too
 	NetSession.active = false
 	Transition.change_scene("res://scenes/menu.tscn")
@@ -613,6 +679,12 @@ func _restart() -> void:
 	_close_menu()
 	_pause_button.visible = true
 	_end_screen.visible = false
+	_clear_board()
+	_new_game()
+
+
+## Every sprite and bit of board state gone, ready for a fresh _new_game().
+func _clear_board() -> void:
 	for view in _card_views.values():
 		if is_instance_valid(view):
 			view.queue_free()
@@ -633,13 +705,15 @@ func _restart() -> void:
 	_hovered_view = null
 	if game != null and game.game_over.is_connected(_on_game_over):
 		game.game_over.disconnect(_on_game_over)
-	_new_game()
 
 
 func _on_game_over(loser: int) -> void:
 	print("game over - durak is %s" % ("draw" if loser < 0 else "P%d" % loser))
 	if DisplayServer.get_name() == "headless":
-		get_tree().quit()
+		if NetSession.active and _is_authority() and is_inside_tree():
+			await get_tree().create_timer(3.0).timeout # let the last moves reach the guests
+		if is_inside_tree():
+			get_tree().quit()
 		return
 	_show_end_screen(loser)
 
@@ -672,6 +746,8 @@ func _show_end_screen(loser: int) -> void:
 		_end_title.text = "You got out %s" % _ordinal(maxi(place, 0) + 1)
 	else:
 		_end_title.text = "%s is the durak" % _display_name(loser)
+	if NetSession.active and SteamLobby.in_lobby:
+		_menu_button.text = "Back to lobby"
 	var rows: Array[String] = []
 	for i in game.finish_order.size():
 		var seat: int = game.finish_order[i]
@@ -694,6 +770,8 @@ func _show_end_screen(loser: int) -> void:
 ## bumps `_turn_epoch`, making this loop bail so a fresh one starts after it.
 ## Host/singleplayer only - see _is_authority().
 func _run_bot_turns() -> void:
+	if game == null:
+		return # pre-game: nothing dealt yet
 	var run_id := _game_id
 	var epoch := _turn_epoch
 	while not game.is_finished():
@@ -726,11 +804,7 @@ func _run_bot_turns() -> void:
 ## them bit-identical without ever transmitting a snapshot.
 
 func _is_authority() -> bool:
-	if not NetSession.active:
-		return true
-	if SteamLobby.in_lobby:
-		return SteamLobby.is_host # Steam lobby ownership, independent of the RPC peer's state
-	return multiplayer.is_server() # LAN test / any other transport: ENet's server is peer id 1
+	return not NetSession.active or Net.is_host()
 
 
 ## Seats Bot.pick must never move for: this peer's own seat (if it's playing)
@@ -751,82 +825,302 @@ func _bot_excluded_seats() -> Array:
 ## it came from this peer's own drag/drop or from Bot.pick.
 func _perform(action: Dictionary) -> void:
 	if _is_authority():
-		await _apply_and_animate(action)
-		if NetSession.active and multiplayer.has_multiplayer_peer():
+		if await _apply_and_animate(action) and NetSession.active:
 			_broadcast_applied(action)
-	elif not _host_reachable():
-		# no live channel to the host - don't throw "peer not connected", bail
+	elif not Net.host_reachable():
 		_awaiting_ack = false
 		_on_disconnected_unexpectedly("Lost connection to the host.")
 	else:
 		_awaiting_ack = true
-		net_request_action.rpc_id(1, _action_to_wire(action))
+		_pending_wire = _action_to_wire(action)
+		Net.send_to_host({t = "req", w = _pending_wire})
 		_await_ack(action)
-
-
-func _host_reachable() -> bool:
-	var p := multiplayer.multiplayer_peer
-	return p != null and not (p is OfflineMultiplayerPeer) \
-		and p.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED \
-		and 1 in multiplayer.get_peers()
 
 
 ## Defensive-only: a well-behaved host always answers. If it doesn't (a lost
 ## packet, a desync), unstick the client's input rather than freeze it forever.
 func _await_ack(action: Dictionary) -> void:
-	await _wait(6.0)
+	await get_tree().create_timer(6.0).timeout # real seconds, even headless (_wait() is one frame there)
+	if not is_inside_tree():
+		return
 	if _awaiting_ack:
 		push_warning("[net] host never answered a %s" % action.type)
 		_awaiting_ack = false
-		_resync()
+		if not _busy: # mid-animation, the animation's own resync will settle it
+			_resync()
 
 
-## A client -> host request to apply `wire`. Runs on the host only.
-## Godot's RPC dispatch does NOT wait for one call's internal awaits to finish
-## before invoking the next incoming call - a burst of broadcasts (e.g. a bout
-## resolving through several bot moves) can call this again while the first is
-## still mid-_apply_and_animate(). Queue + drain one at a time, or two applies
-## interleave and the mirrors desync.
-var _incoming_requests: Array = [] # host: [{wire, seat}] from clients, arrival order
+## Every multiplayer message lands here. Requests and broadcasts are queued
+## and drained one at a time: a message can arrive while the last move is
+## still animating, and two applies must never interleave.
+var _incoming_requests: Array = [] # host: [{wire, seat}] from players, arrival order
 var _draining_requests := false
-var _incoming_broadcasts: Array = [] # client: [wire] from the host, arrival order
-var _draining_broadcasts := false
+var _incoming_acts := {} # client: move number -> wire, waiting their turn
+var _draining_acts := false
+var _action_log: Array = [] # every move applied this game, in order (wire form) - rejoins replay it
+var _pending_wire := {} # client: our own move, sent and not yet confirmed
+var _asked_from := -1 # client: the move number we last asked the host to resend from
+var _last_host_key := 0
+var _applied_wire := {} # the last move _apply_and_animate applied, in wire form, described just before
+var _net_trace := "--net-trace" in OS.get_cmdline_user_args() # print every move + fingerprint (desync hunting)
+var _test_desync_at := -1 # -- --desync-at=<n>: corrupt this board after move n (tests the rebuild)
 
 
-## A client -> host request to apply `wire`. Runs on the host only.
-@rpc("any_peer", "call_remote", "reliable")
-func net_request_action(wire: Dictionary) -> void:
-	if not _is_authority():
-		return
-	var seat := _seat_for_peer(multiplayer.get_remote_sender_id())
-	if seat < 0:
-		return
-	_incoming_requests.append({wire = wire, seat = seat})
-	if not _draining_requests:
-		_drain_incoming_requests()
+func _on_net_message(sender: int, msg: Dictionary) -> void:
+	var from_host := sender == Net.host_key()
+	match str(msg.get("t", "")):
+		"ready":
+			if _is_authority(): _host_on_ready(sender, msg)
+		"ready_state":
+			if from_host:
+				for seat in msg.get("seats", []):
+					_ready_seats[int(seat)] = true
+				_refresh_pregame_rows()
+		"start":
+			if from_host: _client_on_start(msg.get("botified", []))
+		"sync":
+			if from_host: _client_on_sync(msg)
+		"req":
+			if _is_authority():
+				var seat := _seat_of(sender, msg)
+				if seat >= 0:
+					_incoming_requests.append({wire = msg.get("w", {}), seat = seat, from = sender})
+					if not _draining_requests:
+						_drain_incoming_requests()
+		"act":
+			if from_host: _queue_acts(int(msg.get("n", -1)), [msg.get("w", {})])
+		"resync": # a player drifted: the whole log, to rebuild from
+			if _is_authority():
+				Net.send_to(sender, {t = "sync", rebuild = true, botified = _botified,
+					bots = NetSession.seat_is_bot, log = _action_log})
+		"need":
+			if _is_authority():
+				var start := clampi(int(msg.get("from", 0)), 0, _action_log.size())
+				Net.send_to(sender, {t = "fill", from = start, log = _action_log.slice(start)})
+		"fill":
+			if from_host: _queue_acts(int(msg.get("from", 0)), msg.get("log", []))
+		"seat":
+			if from_host: _set_seat_bot(int(msg.get("seat", -1)), bool(msg.get("bot", true)))
+		"host": # a new host took over: line our move logs up
+			if from_host: _client_on_new_host(sender, int(msg.get("n", 0)))
+		"nack": # the host refused our move (stale or illegal)
+			if from_host and _awaiting_ack:
+				_awaiting_ack = false
+				_pending_wire = {}
+				if not _busy:
+					_resync()
+		"extra": # moves the new host missed from the old one
+			if _is_authority(): _host_on_extra(int(msg.get("from", 0)), msg.get("log", []))
 
 
 func _drain_incoming_requests() -> void:
 	_draining_requests = true
 	while not _incoming_requests.is_empty():
-		while _busy: # resolve against a settled state, not one mid-animation
+		while _busy and is_inside_tree(): # resolve against a settled state, not one mid-animation
 			await get_tree().process_frame
+		if not is_inside_tree():
+			return
 		var entry: Dictionary = _incoming_requests.pop_front()
 		var action := _resolve_wire_action(entry.wire, entry.seat)
-		if not action.is_empty(): # else stale/illegal - the sender's watchdog will retry
-			_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
-			await _apply_and_animate(action)
+		if action.is_empty():
+			# stale (they moved on an out-of-date board) or illegal: say so right
+			# away, so their card goes home now instead of after the 6s watchdog
+			Net.send_to(entry.from, {t = "nack", w = entry.wire})
+			continue
+		_turn_epoch += 1 # a network move pre-empts the bot loop same as a local one
+		if await _apply_and_animate(action):
 			_broadcast_applied(action)
+		else:
+			Net.send_to(entry.from, {t = "nack", w = entry.wire})
 	_draining_requests = false
 	_run_bot_turns()
 
 
-## Host -> clients: the action just applied, plus a fingerprint of the resulting
-## game state so a client can catch the instant its mirror drifts.
-func _broadcast_applied(action: Dictionary) -> void:
-	var wire := _action_to_wire(action)
-	wire["fp"] = _state_fingerprint()
-	net_apply_action.rpc(wire)
+## Host -> everyone: the move just applied, its number, and a fingerprint of
+## the resulting state so a player catches the instant their mirror drifts.
+func _broadcast_applied(_action: Dictionary) -> void:
+	var wire := _applied_wire.duplicate() # described before it applied (see _apply_and_animate)
+	_action_log.append(wire)
+	var sent := wire.duplicate()
+	sent["fp"] = _state_fingerprint()
+	if _net_trace:
+		print("[trace] n=%d %s fp=%d | %s" % [_action_log.size() - 1, wire, sent.fp, _state_debug()])
+	Net.broadcast({t = "act", n = _action_log.size() - 1, w = sent})
+
+
+## Client: numbered moves from the host (one live, or a batch filling a gap).
+## Applied strictly in order; a gap asks the host to resend from there.
+func _queue_acts(first: int, wires: Array) -> void:
+	if first < 0 or game == null or _rebuilding:
+		return
+	for i in wires.size():
+		var n := first + i
+		if n >= _action_log.size():
+			_incoming_acts[n] = wires[i]
+	_drain_incoming_acts()
+
+
+func _drain_incoming_acts() -> void:
+	if _draining_acts or game == null:
+		return
+	_draining_acts = true
+	while true:
+		var n := _action_log.size()
+		if not _incoming_acts.has(n):
+			if not _incoming_acts.is_empty() and _asked_from != n:
+				_asked_from = n # missed one: ask for everything from here
+				Net.send_to_host({t = "need", from = n})
+			break
+		while _busy and is_inside_tree():
+			await get_tree().process_frame
+		if not is_inside_tree():
+			return
+		var wire: Dictionary = _incoming_acts[n]
+		_incoming_acts.erase(n)
+		var seat: int = int(wire.get("player", -1))
+		var action := _resolve_wire_action(wire, seat)
+		if seat == human_seat:
+			_awaiting_ack = false
+			_pending_wire = {}
+		if action.is_empty():
+			push_error("[net] DESYNC: can't apply move %d %s | %s" % [n, wire, _state_debug()])
+			_bail_desync()
+			return
+		var clean := wire.duplicate()
+		clean.erase("fp")
+		_action_log.append(clean)
+		await _apply_and_animate(action)
+		if n == _test_desync_at and not game.discard.is_empty():
+			game.discard.pop_back() # test hook: knock our board out of step on purpose
+			_test_desync_at = -1
+		if _net_trace:
+			print("[trace] n=%d %s fp=%d | %s" % [n, clean, _state_fingerprint(), _state_debug()])
+		if wire.has("fp") and int(wire.fp) != _state_fingerprint():
+			push_error("[net] DESYNC after move %d %s: host fp=%d mine=%d | %s" % [
+				n, wire, int(wire.fp), _state_fingerprint(), _state_debug()])
+			_bail_desync()
+			return
+	_draining_acts = false
+
+
+## The host is the truth: a player whose board drifted asks for the host's
+## whole move log and rebuilds from it (an instant replay) instead of
+## leaving. Only if that keeps failing do they go back to the menu.
+var _rebuilds := 0
+var _rebuilding := false
+func _bail_desync() -> void:
+	_draining_acts = false
+	_incoming_acts.clear()
+	_rebuilds += 1
+	if _is_authority() or _rebuilds > 3 or not Net.host_reachable():
+		_on_disconnected_unexpectedly("Lost sync with the host. Back to the menu.")
+		return
+	push_warning("[net] out of sync - rebuilding from the host's moves (try %d)" % _rebuilds)
+	_rebuilding = true # moves arriving meanwhile are in the rebuild anyway
+	_awaiting_ack = false
+	_pending_wire = {}
+	Net.send_to_host({t = "resync"})
+
+
+## Who sent this: Steam ID -> seat, or ENet peer -> seat. On LAN a player
+## tells us its seat in "ready" (local test only), which also maps a
+## reconnecting instance's new peer id.
+func _seat_of(key: int, msg: Dictionary = {}) -> int:
+	var seat := NetSession.seat_steam_id.find(key) if Net.mode == Net.Mode.STEAM else NetSession.seat_peer_id.find(key)
+	if seat < 0 and Net.mode == Net.Mode.LAN and msg.has("seat"):
+		seat = int(msg.seat)
+		if seat >= 0 and seat < NetSession.seat_peer_id.size():
+			NetSession.seat_peer_id[seat] = key
+	return seat
+
+
+## A seat switches between a person and a bot (a drop, a rejoin, the old host
+## leaving). The host decides and tells everyone; bots only act on the host.
+func _set_seat_bot(seat: int, bot: bool) -> void:
+	if seat < 0 or seat >= NetSession.seat_is_bot.size() or seat == human_seat and bot:
+		return
+	if NetSession.seat_is_bot[seat] == bot:
+		return
+	NetSession.seat_is_bot[seat] = bot
+	var who := NetSession.player_names[seat] if NetSession.player_names[seat] != "" else "P%d" % seat
+	var line := "%s left, a bot took their seat" % who if bot else "%s is back" % who
+	_flash_effect([line])
+	print("[net] seat %d: %s" % [seat, line])
+	if game != null:
+		_update_seat_label(seat)
+	if _is_authority():
+		Net.broadcast({t = "seat", seat = seat, bot = bot})
+		_turn_epoch += 1
+		_run_bot_turns()
+
+
+## Host: someone left the lobby / dropped. Before the start they're just not
+## ready; mid-game a bot takes over so nobody's left waiting on them.
+func _on_member_left(key: int) -> void:
+	if not _is_authority():
+		return
+	var seat := _seat_of(key)
+	if seat < 0 or seat == human_seat:
+		return
+	if not _pregame_started:
+		_ready_seats.erase(seat)
+		_refresh_pregame_rows()
+		return
+	_set_seat_bot(seat, true)
+
+
+## Steam handed the lobby to someone else (the host left). Every machine has
+## the full game, so play carries on: the new host takes the old host's seat
+## over with a bot and lines everyone's move logs up.
+func _on_host_changed(new_key: int) -> void:
+	var old_seat := _seat_of(_last_host_key)
+	_last_host_key = new_key
+	if game == null or not Net.is_host():
+		if not _pending_wire.is_empty(): # our move went to the old host: resend
+			Net.send_to_host({t = "req", w = _pending_wire})
+		return
+	print("[net] host left - taking over at move %d" % _action_log.size())
+	_flash_effect(["The host left. You're hosting now."])
+	_draining_acts = false
+	_incoming_acts.clear()
+	Net.broadcast({t = "host", n = _action_log.size()})
+	if old_seat >= 0:
+		_set_seat_bot(old_seat, true)
+	if not _pending_wire.is_empty(): # our own move never got confirmed: apply it ourselves
+		var action := _resolve_wire_action(_pending_wire, human_seat)
+		_pending_wire = {}
+		_awaiting_ack = false
+		if not action.is_empty():
+			await _perform(action)
+	_run_bot_turns()
+
+
+## Client, after a host change: catch up with the new host, or hand it the
+## moves it missed from the old one.
+func _client_on_new_host(_host: int, host_n: int) -> void:
+	_asked_from = -1
+	if _action_log.size() > host_n:
+		Net.send_to_host({t = "extra", from = host_n, log = _action_log.slice(host_n)})
+	elif _action_log.size() < host_n:
+		Net.send_to_host({t = "need", from = _action_log.size()})
+
+
+## New host: moves a player saw from the old host that we never got. The old
+## host had already validated them, so apply them (numbered, broadcast) as ours.
+func _host_on_extra(from: int, wires: Array) -> void:
+	for i in wires.size():
+		if from + i != _action_log.size():
+			continue # already have it (several players can send the same ones)
+		while _busy and is_inside_tree():
+			await get_tree().process_frame
+		if not is_inside_tree():
+			return
+		var action := _resolve_wire_action(wires[i], int(wires[i].get("player", -1)))
+		if action.is_empty():
+			push_error("[net] can't take over move %d %s" % [from + i, wires[i]])
+			return
+		if await _apply_and_animate(action):
+			_broadcast_applied(action)
 
 
 ## Cheap, order-sensitive hash of everything a replayed action stream must keep
@@ -840,12 +1134,12 @@ func _state_fingerprint() -> int:
 	parts.append_array(game.finish_order)
 	parts.append(game.passed.keys().size())
 	for pair in game.table:
-		parts.append(pair.attack.suit * 100 + pair.attack.rank)
-		parts.append(-1 if pair.defense == null else pair.defense.suit * 100 + pair.defense.rank)
+		parts.append("%d%s" % [pair.attack.suit * 100 + pair.attack.rank, pair.attack.special])
+		parts.append("-" if pair.defense == null else "%d%s" % [pair.defense.suit * 100 + pair.defense.rank, pair.defense.special])
 	for hand in game.hands:
 		var ranks: Array = []
 		for c in hand:
-			ranks.append(c.suit * 100 + c.rank)
+			ranks.append("%d%s" % [c.suit * 100 + c.rank, c.special]) # specials too: same-looking cards can differ
 		ranks.sort()
 		parts.append(ranks)
 	return str(parts).hash()
@@ -860,65 +1154,24 @@ func _state_debug() -> String:
 		game.is_out, game.finish_order, sizes, game.table.size()]
 
 
-## The host -> everyone broadcast of an action it just applied. Runs on clients.
-@rpc("authority", "call_remote", "reliable")
-func net_apply_action(wire: Dictionary) -> void:
-	_incoming_broadcasts.append(wire)
-	if not _draining_broadcasts:
-		_drain_incoming_broadcasts()
-
-
-func _drain_incoming_broadcasts() -> void:
-	_draining_broadcasts = true
-	while not _incoming_broadcasts.is_empty():
-		while _busy: # apply each broadcast against a settled mirror, in order
-			await get_tree().process_frame
-		var wire: Dictionary = _incoming_broadcasts.pop_front()
-		var seat: int = wire.get("player", -1)
-		var action := _resolve_wire_action(wire, seat)
-		if seat == human_seat:
-			_awaiting_ack = false
-		if action.is_empty():
-			push_error("[net] DESYNC: can't apply host action %s | %s" % [wire, _state_debug()])
-			_bail_desync()
-			return
-		await _apply_and_animate(action)
-		if wire.has("fp") and int(wire.fp) != _state_fingerprint():
-			push_error("[net] DESYNC after %s: host fp=%d mine=%d | %s" % [
-				wire, int(wire.fp), _state_fingerprint(), _state_debug()])
-			_bail_desync()
-			return
-	_draining_broadcasts = false
-
-
-func _bail_desync() -> void:
-	_draining_broadcasts = false
-	_incoming_broadcasts.clear()
-	_on_disconnected_unexpectedly("Desynced from the host — returning to the menu.")
-
-
-## Host-only. Two transports feed this: a LAN test fills NetSession.seat_peer_id
-## with real Godot peer ids directly; Steam only gives us a steam_id per seat,
-## so SteamLobby resolves the RPC sender's Godot peer id back to that.
-func _seat_for_peer(peer_id: int) -> int:
-	var lan_seat := NetSession.seat_peer_id.find(peer_id)
-	if lan_seat != -1:
-		return lan_seat
-	var sid := SteamLobby.steam_id_for_peer(peer_id)
-	if sid == 0:
-		return -1
-	return NetSession.seat_steam_id.find(sid)
-
-
 ## Headless test hook (see _ready()): stands in for a client's missing UI by
 ## submitting, for OUR seat only, whatever a bot would have played - through
 ## the exact same _perform()/RPC path a real drag-and-drop uses.
 func _run_client_autoplay() -> void:
+	var quit_after := -1
+	for a in OS.get_cmdline_user_args():
+		if str(a).begins_with("--desync-at="):
+			_test_desync_at = int(str(a).get_slice("=", 1))
+		if str(a).begins_with("--lan-quit-after="):
+			quit_after = int(str(a).get_slice("=", 1))
+	var moves := 0
+	while game == null:
+		await _wait(0.05) # a guest's board only exists once the host lets it in
 	var run_id := _game_id
 	while game != null and not game.is_finished():
 		if run_id != _game_id:
 			return
-		if _busy or _awaiting_ack:
+		if _busy or _awaiting_ack or _draining_acts or not _incoming_acts.is_empty():
 			await _wait(0.02)
 			continue
 		var only_this_seat: Array = []
@@ -930,6 +1183,11 @@ func _run_client_autoplay() -> void:
 			await _wait(0.02)
 			continue
 		await _perform(action)
+		moves += 1
+		if moves == quit_after:
+			print("[lan] seat %d walking out after %d moves" % [human_seat, moves])
+			get_tree().quit()
+			return
 		if _is_authority():
 			# on a real host this is _submit()'s job; this stand-in has to do
 			# it too, or a bot seat whose turn follows ours never gets driven
@@ -943,6 +1201,15 @@ func _action_to_wire(action: Dictionary) -> Dictionary:
 	if action.get("card") != null:
 		wire.suit = action.card.suit
 		wire.rank = action.card.rank
+		if action.card.special != &"":
+			wire.sp = str(action.card.special) # draft offers can share suit + rank, differing only in this
+		# Which copy: Forge / Propaganda can leave two cards with the same suit
+		# and rank in one hand, and picking the wrong one desyncs later (the
+		# bout-end revert restores the other card). Every peer's hand is in
+		# the same order, so the position pins it down.
+		var at: int = game.hands[action.player].find(action.card) if action.player >= 0 else -1
+		if at >= 0:
+			wire.hi = at
 	if action.has("target"):
 		wire.target = action.target
 	return wire
@@ -965,6 +1232,10 @@ func _resolve_wire_action(wire: Dictionary, seat: int) -> Dictionary:
 			continue
 		if wants_card and (candidate.card.suit != wire.suit or candidate.card.rank != wire.rank):
 			continue
+		if wants_card and str(candidate.card.special) != str(wire.get("sp", "")):
+			continue # same suit + rank, different special (two draft offers alike)
+		if wire.has("hi") and game.hands[seat].find(candidate.card) != int(wire.hi):
+			continue # the other copy of a forged card
 		return candidate
 	return {}
 
@@ -979,11 +1250,19 @@ func _resolve_wire_action(wire: Dictionary, seat: int) -> Dictionary:
 ## Serialized: two of these must never overlap or their game.apply_action()
 ## calls interleave and the mirrors desync. Every caller (the bot loop, both
 ## RPC drain loops, the local input paths) funnels through this one wait.
-func _apply_and_animate(action: Dictionary) -> void:
-	while _busy:
+## Returns false if the move was no longer legal by its turn (and so wasn't applied).
+func _apply_and_animate(action: Dictionary) -> bool:
+	while _busy and is_inside_tree():
 		await get_tree().process_frame
+	# Two callers can pick a move in the same frame (the bot loop, your own
+	# drop, a network request): the one that waited above may have been made
+	# stale by the one that went first. Applying it anyway put the host in a
+	# state nobody else reached - a desync. So: still legal, or dropped.
+	if game == null or not _still_legal(action):
+		return false
 	var run_id := _game_id
 	_busy = true
+	_busy_since = Time.get_ticks_msec() / 1000.0
 	_waiting_for_human = false
 	var before := _snapshot()
 	# Where the played card would sit - computed now, because a card that ends
@@ -999,7 +1278,19 @@ func _apply_and_animate(action: Dictionary) -> void:
 		lead_slot = {pos = _table_slot_pos(i, count, defending) + Vector2(j.x, j.y),
 			angle = (0.14 if defending else 0.0) + j.z, z = _table_z(i, defending)}
 
+	# The move as the network describes it - taken now, before applying, while
+	# the card is still in hand and still has its special (Sift clears its own
+	# on pickup, a played card has left the hand): describing it afterwards
+	# matched the wrong copy on the other machines.
+	_applied_wire = _action_to_wire(action)
 	game.apply_action(action)
+	# Cards that just left my hand (played, discarded by a special) stop being
+	# hand cards right now - not at the end-of-move resync. Otherwise once a
+	# played card's flight finished, the hand loop pulled it back into the fan
+	# for the rest of the move (most visible while CLEARED holds the table).
+	if human_seat >= 0:
+		var still_held: Array = game.hands[human_seat]
+		_hand_slots = _hand_slots.filter(func(sl): return sl.card in still_held)
 	# Captured immediately - apply_action() clears effect_log at its own next
 	# call, and a bot's next move could come before this one finishes animating.
 	if not game.effect_log.is_empty():
@@ -1099,7 +1390,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 	if not played.is_empty():
 		Sfx.deal_burst(played.size(), deal_stagger)
 		await _wait(play_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 
 	# 1.25 Spilt Samogon: unstuck cards slide onto the table with the lead;
 	# newly stuck ones slide off to the edge as the table clears
@@ -1114,7 +1405,7 @@ func _apply_and_animate(action: Dictionary) -> void:
 		_animate_to(view, target.pos, target.angle, _fit_scale(view, target.height), special_move_anim, 0.0)
 	if not stuck_moved.is_empty():
 		await _wait(special_move_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 
 	# 1.5 burned cards go up in flames where they are, before the table clears
 	if not burned_now.is_empty():
@@ -1122,22 +1413,27 @@ func _apply_and_animate(action: Dictionary) -> void:
 		for entry in burned_now:
 			_animate_burn(entry.card, entry.from)
 		await _wait(burn_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 
 	# 2. clear the table
 	if not discarded.is_empty():
-		# the bout is over: stamp it, let it sink in, then sweep
+		# the bout is over: stamp it, let it sink in, then sweep. The old
+		# prompt ("YOUR MOVE · DEFEND", Take/Pass) goes now - the end-of-move
+		# resync brings back whatever the next bout needs
+		for hud in [_turn_banner, _take_button, _pass_button, _confirm_button, _deflect_strip]:
+			hud.visible = false
 		var stamp := _stamp_table("CLEARED")
 		await _wait(stamp_beat)
-		if run_id != _game_id: return
-		stamp.create_tween().tween_property(stamp, "modulate:a", 0.0, clear_anim).finished.connect(stamp.queue_free) # resync may free it first, so the tween lives on it
+		if run_id != _game_id: return true
+		if is_instance_valid(stamp):
+			stamp.create_tween().tween_property(stamp, "modulate:a", 0.0, clear_anim).finished.connect(stamp.queue_free)
 		Sfx.fan()
 		await _wait(_sweep_to_discard(discarded))
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 		_sync_back_stack(_discard_stack, mini(game.discard.size(), 5),
 			discard_pos, discard_card_height, 1)
 		await _wait(clear_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 	elif not taken.is_empty():
 		Sfx.fan()
 		if taker == human_seat:
@@ -1151,14 +1447,14 @@ func _apply_and_animate(action: Dictionary) -> void:
 				_animate_view_away(card)
 			_grow_opponent_backs(taker)
 		await _wait(clear_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 
 	# 2.5. special effects visibly relocate a card - Sift, Cull, and future ones
 	if not special_moved.is_empty():
 		for entry in special_moved:
 			_animate_special_move(entry.card, entry.from, entry.to)
 		await _wait(special_move_beat)
-		if run_id != _game_id: return
+		if run_id != _game_id: return true
 
 	# 3. refill from the talon, one seat at a time, in the engine's refill order
 	if not refilled.is_empty():
@@ -1173,19 +1469,24 @@ func _apply_and_animate(action: Dictionary) -> void:
 			_sync_back_stack(_talon_stack, maxi(game.talon_count() - 1, 0),
 				talon_pos, talon_card_height, -1)
 			await _wait(refill_beat)
-			if run_id != _game_id: return
+			if run_id != _game_id: return true
 
 	_busy = false
 	if run_id != _game_id:
-		return
+		return true
 	_resync() # 4. settle every sprite to the final layout and unlock input
+	return true
 
 
 ## A passport-style ink stamp slammed over the middle of the table, tilted
 ## like it was done by hand. Caller frees it.
+
+
 func _stamp_table(text: String) -> Control:
 	var box := _special_ui.ink_box(text, 92, 7)
 	box.z_index = 900 # over every table card
+	_ephemeral_views[box] = true # not a card: keep the orphan sweep off it
+	box.tree_exiting.connect(func(): _ephemeral_views.erase(box))
 	_card_layer.add_child(box)
 	_special_ui.slam(box)
 	box.position = BOARD_CENTER - box.pivot_offset
@@ -1193,7 +1494,17 @@ func _stamp_table(text: String) -> Control:
 	return box
 
 
+## Is this exact move (same type, player, card, target) still on offer?
+func _still_legal(action: Dictionary) -> bool:
+	for candidate in game.get_legal_actions(int(action.get("player", -1))):
+		if candidate.type == action.type and candidate.get("card") == action.get("card") 				and candidate.get("target", -1) == action.get("target", -1):
+			return true
+	return false
+
+
 func _wait(seconds: float) -> void:
+	if not is_inside_tree():
+		return # the board is gone (back to the menu): let the caller's run_id check bail
 	if _headless:
 		await get_tree().process_frame
 	else:
@@ -1502,6 +1813,7 @@ func _end_drag() -> void:
 			for kind in ["defend", "rebound"]:
 				for action in actions:
 					if action.type == kind and action.card == _drag.card and action.target == open_attack.table_index:
+						_hold_dropped()
 						_submit(action)
 						return
 
@@ -1512,6 +1824,7 @@ func _end_drag() -> void:
 	if on_pass_slot or (table_drop_rect.has_point(mouse) and not _over_table_card(mouse)):
 		for action in actions:
 			if action.type == "deflect" and action.card == _drag.card:
+				_hold_dropped()
 				_submit(action)
 				return
 
@@ -1519,6 +1832,7 @@ func _end_drag() -> void:
 	if table_drop_rect.has_point(mouse):
 		for action in actions:
 			if action.type == "attack" and action.card == _drag.card:
+				_hold_dropped()
 				_play_local(action)
 				return
 
@@ -1527,6 +1841,16 @@ func _end_drag() -> void:
 	_drag = {}
 	if is_instance_valid(view):
 		view.z_index = 0
+
+
+## A played card stays where it was let go until the move lands. On a
+## multiplayer client the move goes to the host first; without this the hand
+## pulled the card back into the fan while waiting, then the host's answer
+## flew it out again - a rubber band. Cleared by the next resync (the move
+## applied, or the host refused it and the card goes home).
+func _hold_dropped() -> void:
+	if is_instance_valid(_drag.view):
+		_drag.view.set_meta("held", true)
 
 
 ## True if `point` is at or below the top of the human's fanned hand.
@@ -1934,6 +2258,12 @@ func _rebuild_forge_modes() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _busy and Time.get_ticks_msec() / 1000.0 - _busy_since > BUSY_WATCHDOG:
+		push_error("[game] a move animation never finished - unsticking the board | %s" % _state_debug())
+		_busy = false
+		_resync()
+		if _is_authority():
+			_run_bot_turns()
 	_update_effect_toast()
 	_update_card_tooltip()
 	_update_throw_in_timer()
@@ -1996,6 +2326,8 @@ func _process(_delta: float) -> void:
 			continue
 		if view.has_meta("tween") and is_instance_valid(view.get_meta("tween")) and view.get_meta("tween").is_running():
 			continue # mid-animation (drawn, played, sorted): the tween owns it
+		if view.has_meta("held"):
+			continue # dropped on the table, waiting for the move to land
 		var raised: bool = view == _hovered_view and _lifts(slot)
 		# lift perpendicular to the fan so a tilted card rises straight off the arc
 		var lift := Vector2(sin(slot.home_angle), -cos(slot.home_angle)) * hover_raise
@@ -2152,6 +2484,8 @@ func _display_name(seat: int) -> String:
 ## knows seat numbers, never player identity, by design (see durak_game.gd).
 func _localize_seat_names(text: String) -> String:
 	var result := text
+	if game == null:
+		return result # a message before the board exists (a seat change while still loading)
 	# Highest seat number first: "P10" contains "P1" as a literal substring, so
 	# replacing P1 before P10 would corrupt it. A higher seat number is always
 	# the longer (or equal) string, so descending order never has this problem.
@@ -2802,6 +3136,10 @@ func _rebuild_input_targets() -> void:
 		return
 
 	var hand: Array = _display_hand(human_seat)
+	if not _awaiting_ack: # our move landed (or was refused): nothing stays held
+		for held_view in _card_views.values():
+			if is_instance_valid(held_view) and held_view.has_meta("held"):
+				held_view.remove_meta("held")
 	var playable := _playable_cards()
 	for i in hand.size():
 		var card: CardData = hand[i]

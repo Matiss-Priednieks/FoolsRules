@@ -128,28 +128,23 @@ func _ready() -> void:
 	SteamLobby.browse_updated.connect(_refresh_browse)
 	SteamLobby.game_starting.connect(_on_game_starting)
 
-	_goto(Screen.MAIN)
+	_goto(Screen.ROOM if SteamLobby.in_lobby else Screen.MAIN) # back from a match: same room
+	if SteamLobby.in_lobby:
+		_refresh_room()
 	if NetSession.pending_message != "":
 		_flash(NetSession.pending_message)
 		NetSession.pending_message = ""
 	_play_intro()
-	_build_intro_test_buttons()
 
 
 ## Intro: the title, Players row, buttons and the Music toggle fly in one after
-## another (slight overshoot, fading up) from `intro_from` - or `--intro=<dir>`
-## on the command line, for trying the three side by side.
+## another (slight overshoot, fading up) from `intro_from`.
 @export_enum("left", "bottom", "top") var intro_from := "left"
 
 var _intro_tweens: Array[Tween] = []
 
-func _play_intro(forced_dir := "") -> void:
+func _play_intro() -> void:
 	var dir := intro_from
-	for a in OS.get_cmdline_user_args():
-		if str(a).begins_with("--intro="):
-			dir = str(a).substr(8)
-	if forced_dir != "":
-		dir = forced_dir
 	# replaying mid-flight: stop the old run and put everything home first
 	for tw in _intro_tweens:
 		tw.kill()
@@ -184,21 +179,6 @@ func _play_intro(forced_dir := "") -> void:
 ## Dev aid: three arrow buttons bottom-left that replay the intro from each
 ## side (the arrow points the way the items come in from). Remove once a
 ## direction's picked.
-func _build_intro_test_buttons() -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	row.position = Vector2(70, 1080 - 56 - 64) # inside the CRT tube's rounded corner
-	add_child(row)
-	for pair in [["\u2190", "left"], ["\u2193", "bottom"], ["\u2191", "top"]]:
-		var b := Button.new()
-		b.text = pair[0]
-		b.tooltip_text = "Replay the intro from the %s" % pair[1]
-		b.custom_minimum_size = Vector2(72, 64)
-		b.focus_mode = Control.FOCUS_NONE
-		b.pressed.connect(_play_intro.bind(pair[1]))
-		row.add_child(b)
-
-
 func _process(_delta: float) -> void:
 	if _toast == null:
 		return
@@ -354,6 +334,13 @@ func _refresh_room() -> void:
 		row.setup(m, m.steam_id == SteamManager.steam_id, taken, SteamLobby.player_count)
 		row.seat_picked.connect(SteamLobby.set_my_seat)
 		row.ready_toggled.connect(SteamLobby.set_my_ready)
+		if SteamLobby.is_host and m.steam_id != SteamManager.steam_id:
+			var kick := Button.new()
+			kick.text = "Kick"
+			kick.theme_type_variation = &"SmallButton"
+			kick.focus_mode = Control.FOCUS_NONE
+			kick.pressed.connect(SteamLobby.kick.bind(m.steam_id))
+			row.add_child(kick)
 
 	_current_invite_code = SteamLobby.get_invite_code()
 	_invite_code_row.visible = _current_invite_code != ""
@@ -411,26 +398,34 @@ func _start_singleplayer() -> void:
 	Transition.change_scene("res://scenes/game.tscn")
 
 
+## `--lan-players=N` (host) sets the table size; `--lan-seat=K` (guest) picks
+## the seat, default 1. Relaunching a guest with the same seat mid-game is a
+## rejoin: the host sends the move log and the new instance replays it.
 func _start_lan_test(is_host: bool, address: String) -> void:
-	NetSession.configure_lan_test(0 if is_host else 1)
+	var players := int(_lan_arg("--lan-players", "2"))
+	var seat := 0 if is_host else int(_lan_arg("--lan-seat", "1"))
+	NetSession.configure_lan_test(seat, players)
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(LAN_PORT, 1) if is_host else peer.create_client(address, LAN_PORT)
+	var err := peer.create_server(LAN_PORT, 23) if is_host else peer.create_client(address, LAN_PORT)
 	if err != OK:
 		push_warning("[lan] %s failed: %s" % ["create_server" if is_host else "create_client", err])
 		return
 	multiplayer.multiplayer_peer = peer
+	Net.use_lan()
 	if is_host:
-		print("[lan] hosting on port %d - waiting for the other instance" % LAN_PORT)
-		multiplayer.peer_connected.connect(_on_lan_guest_connected)
+		print("[lan] hosting a %d-player game on port %d" % [players, LAN_PORT])
+		Transition.change_scene("res://scenes/game.tscn") # guests report in whenever they arrive
 	else:
-		print("[lan] connecting to %s:%d" % [address, LAN_PORT])
+		print("[lan] seat %d connecting to %s:%d" % [seat, address, LAN_PORT])
 		multiplayer.connected_to_server.connect(_on_lan_connected)
 		multiplayer.connection_failed.connect(func(): push_warning("[lan] connection failed"))
 
 
-func _on_lan_guest_connected(id: int) -> void:
-	NetSession.seat_peer_id[1] = id
-	Transition.change_scene("res://scenes/game.tscn")
+func _lan_arg(name: String, fallback: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if str(a).begins_with(name + "="):
+			return str(a).get_slice("=", 1)
+	return fallback
 
 
 func _on_lan_connected() -> void:

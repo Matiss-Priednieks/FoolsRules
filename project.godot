@@ -20,6 +20,7 @@ config/icon="uid://bqckf788e4elv"
 
 SteamManager="*res://scripts/autoload/steam_manager.gd"
 SteamLobby="*res://scripts/autoload/steam_lobby.gd"
+Net="*res://scripts/autoload/net.gd"
 NetSession="*res://scripts/autoload/net_session.gd"
 Music="*res://scripts/autoload/music.gd"
 Sfx="*res://scripts/autoload/sfx.gd"

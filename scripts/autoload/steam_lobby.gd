@@ -37,10 +37,7 @@ signal members_updated()
 signal browse_updated()
 ## seat_map: { steam_id:int -> seat:int }, names: { steam_id:int -> String }
 signal game_starting(seat_map: Dictionary, names: Dictionary, game_seed: int, player_count: int)
-## The RPC connection to the host died (or never truly formed) after the match
-## already started - a client-only signal (MultiplayerAPI.server_disconnected
-## never fires on the host). game.gd listens for this to bail out gracefully
-## instead of sitting frozen with no feedback.
+## We lost the lobby itself mid-match (game.gd bails to the menu on it).
 signal disconnected_unexpectedly(reason: String)
 
 var in_lobby := false
@@ -52,8 +49,9 @@ var browse_results: Array[Dictionary] = []   # [{lobby_id, host_name, count, max
 var player_count := DEFAULT_PLAYERS  # this lobby's seat count (host sets it, clients read it)
 
 var _steam: Object = null
-var _peer: MultiplayerPeer = null
 var _starting := false
+var _done_seed := 0 # the match we just came back from - its stale "starting" data mustn't restart it
+var _started_seed := 0 # the match we've already gone into - lobby updates mustn't start it twice
 var _pending_listed := true
 var _pending_count := DEFAULT_PLAYERS
 
@@ -61,13 +59,15 @@ var _pending_count := DEFAULT_PLAYERS
 func _ready() -> void:
 	if not SteamManager.available:
 		return
-	_steam = Engine.get_singleton("Steam")
+	_steam = SteamManager.api()
 	_steam.connect("lobby_created", _on_lobby_created)
 	_steam.connect("lobby_joined", _on_lobby_joined)
 	_steam.connect("lobby_match_list", _on_lobby_match_list)
 	_steam.connect("lobby_chat_update", _on_lobby_chat_update)
 	_steam.connect("lobby_data_update", _on_lobby_data_update)
 	_steam.connect("join_requested", _on_join_requested)
+	Net.host_changed.connect(_on_host_changed)
+	Net.message.connect(_on_net_message)
 
 	# Launched by accepting a Steam invite from outside the game:
 	# Steam appends "+connect_lobby <id>" to the command line.
@@ -107,35 +107,13 @@ func join(target: int) -> void:
 func leave() -> void:
 	if in_lobby and _steam != null:
 		_steam.leaveLobby(lobby_id)
-	_teardown_peer()
+	Net.stop()
 	in_lobby = false
 	is_host = false
 	lobby_id = 0
 	_starting = false
 	members.clear()
 	lobby_exited.emit()
-
-
-## Fully release the multiplayer peer: close its Steam listen socket (else the
-## next host/join in this process fails with "socket already in use", err 20)
-## and drop the signal handlers so they don't stack across lobby cycles.
-func _teardown_peer() -> void:
-	for pair in [
-		[&"peer_connected", _on_peer_connected],
-		[&"peer_disconnected", _on_peer_disconnected],
-		[&"connection_failed", _on_connection_failed],
-		[&"server_disconnected", _on_server_disconnected],
-	]:
-		if multiplayer.is_connected(pair[0], pair[1]):
-			multiplayer.disconnect(pair[0], pair[1])
-	# Detaching the peer from the MultiplayerAPI drops the last strong ref (it's
-	# RefCounted) and lets its destructor close the Steam listen socket. Calling
-	# _peer.close() explicitly here crashed GodotSteam v4.22 on the second host,
-	# so don't - release it and let _start_peer's back-off give Steam time to
-	# actually free the socket before the next host attempt.
-	if multiplayer.has_multiplayer_peer():
-		multiplayer.multiplayer_peer = null
-	_peer = null
 
 
 func refresh_browse() -> void:
@@ -206,9 +184,36 @@ func start_game() -> void:
 	var payload := {seed = randi_range(1, 2000000000), seats = seats_wire}
 	_steam.setLobbyData(lobby_id, SEATMAP, JSON.stringify(payload))
 	_steam.setLobbyData(lobby_id, LOBBY_STATE, "starting")
-	if _steam.has_method("setLobbyJoinable"):
-		_steam.setLobbyJoinable(lobby_id, false)
+	# stays joinable: a player who drops can rejoin (the browser already hides
+	# started lobbies, and anyone not in the seat map is turned away)
 	_maybe_start()  # host may not get its own lobby_data_update
+
+
+## After a match: everyone's back in the room. The host reopens the lobby for
+## another round (same people, seats kept, ready-ups cleared).
+func back_to_room() -> void:
+	if not in_lobby:
+		return
+	_starting = false
+	_done_seed = NetSession.seed
+	_steam.setLobbyMemberData(lobby_id, READY, "0")
+	if is_host:
+		_steam.setLobbyData(lobby_id, SEATMAP, "")
+		_steam.setLobbyData(lobby_id, LOBBY_STATE, "setup")
+	_rebuild_members()
+	members_updated.emit()
+
+
+## Host only: tell a member to leave (Steam has no kick of its own).
+func kick(steam_id: int) -> void:
+	if is_host and in_lobby and steam_id != SteamManager.steam_id:
+		Net.send_to(steam_id, {t = "kick"})
+
+
+func _on_net_message(sender: int, msg: Dictionary) -> void:
+	if str(msg.get("t", "")) == "kick" and in_lobby and sender == int(_steam.getLobbyOwner(lobby_id)):
+		leave()
+		lobby_error.emit("The host removed you from the lobby.")
 
 
 func seats_taken() -> Dictionary:
@@ -217,14 +222,6 @@ func seats_taken() -> Dictionary:
 		if m.seat >= 0:
 			taken[m.seat] = m.steam_id
 	return taken
-
-
-## The Steam ID behind a Godot multiplayer peer id, for RPC sender -> seat
-## lookups. 0 if there's no active peer or the id is unknown.
-func steam_id_for_peer(peer_id: int) -> int:
-	if _peer == null or not _peer.has_method("get_steam_id_for_peer_id"):
-		return 0
-	return int(_peer.get_steam_id_for_peer_id(peer_id))
 
 
 # --- Steam callbacks ----------------------------------------------------
@@ -245,7 +242,7 @@ func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
 	_steam.setLobbyMemberData(lobby_id, SEAT, "0")   # host takes seat 0
 	_steam.setLobbyMemberData(lobby_id, READY, "0")
-	_start_peer(true)
+	Net.use_steam(lobby_id)
 	_rebuild_members()
 	lobby_entered.emit(true)
 	members_updated.emit()
@@ -256,9 +253,8 @@ func _on_lobby_joined(this_lobby: int, _permissions: int, _locked: bool, respons
 		lobby_error.emit("couldn't join lobby (%d)" % response)
 		return
 	# createLobby fires lobby_joined for the creator too - _on_lobby_created has
-	# already set our peer + member-data up. Re-running _start_peer() here fails
-	# to make a second listen socket and breaks the host's networking; re-writing
-	# member-data resets our seat. So: if we're already in this lobby, we made it.
+	# already set everything up, and re-writing member-data would reset our
+	# seat. So: if we're already in this lobby, we made it.
 	if in_lobby and lobby_id == this_lobby:
 		return
 	lobby_id = this_lobby
@@ -268,7 +264,7 @@ func _on_lobby_joined(this_lobby: int, _permissions: int, _locked: bool, respons
 	_steam.setLobbyMemberData(lobby_id, PLAYER_NAME, SteamManager.persona_name)
 	_steam.setLobbyMemberData(lobby_id, SEAT, "-1")
 	_steam.setLobbyMemberData(lobby_id, READY, "0")
-	_start_peer(is_host)
+	Net.use_steam(lobby_id)
 	_rebuild_members()
 	lobby_entered.emit(is_host)
 	members_updated.emit()
@@ -333,87 +329,20 @@ func _read_player_count() -> void:
 		player_count = clampi(int(raw), 2, MAX_PLAYERS)
 
 
-## Bring up the SteamMultiplayerPeer for this lobby. Opening the Steam Datagram
-## Relay listen socket can transiently fail - the relay backend is still coming
-## online, Steam's servers are mid-restart, or the previous lobby's socket hasn't
-## finished releasing - so this retries with a growing back-off before giving up.
-func _start_peer(as_host: bool) -> void:
-	if not ClassDB.class_exists("SteamMultiplayerPeer"):
-		return
-
-	# First try is near-immediate; later tries wait longer to ride out a relay
-	# blip or a slow socket release.
-	var backoff := [0.05, 0.75, 1.5, 3.0]
-	for attempt in backoff.size():
-		if not in_lobby:
-			return
-		_teardown_peer()  # also clears anything a failed previous attempt left
-		await get_tree().create_timer(backoff[attempt]).timeout
-		if not in_lobby:
-			return
-
-		_peer = ClassDB.instantiate("SteamMultiplayerPeer")
-		# Direct P2P between two real machines routinely fails to punch through
-		# NAT/firewalls even though the peer object is created fine - the
-		# connection just never completes and every later RPC errors as "not
-		# connected". Steam's relay network (SDR) is the fallback; it has to be
-		# on before the connection attempt starts.
-		if _peer.has_method("set_server_relay"):
-			_peer.set_server_relay(true)
-		var err := OK
-		if as_host:
-			err = _peer.host_with_lobby(lobby_id) if _peer.has_method("host_with_lobby") else _peer.create_host(0)
-		else:
-			err = _peer.connect_to_lobby(lobby_id) if _peer.has_method("connect_to_lobby") else _peer.create_client(int(_steam.getLobbyOwner(lobby_id)), 0)
-
-		if err == OK:
-			multiplayer.multiplayer_peer = _peer
-			print("[Lobby] peer started (%s) on attempt %d, status=%d"
-				% ["host" if as_host else "client", attempt + 1, _peer.get_connection_status()])
-			multiplayer.peer_connected.connect(_on_peer_connected)
-			multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-			multiplayer.connection_failed.connect(_on_connection_failed)
-			multiplayer.server_disconnected.connect(_on_server_disconnected)
-			return
-
-		push_warning("[Lobby] peer setup attempt %d/%d failed (%s)"
-			% [attempt + 1, backoff.size(), err])
-		_peer = null  # drop the ref; next loop's _teardown_peer + wait lets it release
-
-	lobby_error.emit("Steam networking didn't come up (it may be having a wobble - Steam server restarts do this). Leave the lobby and try again in a minute.")
-
-
-func _on_peer_connected(id: int) -> void:
-	print("[Lobby] peer_connected: %d" % id)
-	members_updated.emit() # room UI re-checks all_peers_connected() for the Start button
-
-func _on_peer_disconnected(id: int) -> void:
-	print("[Lobby] peer_disconnected: %d" % id)
-	members_updated.emit()
-
-func _on_connection_failed() -> void:
-	print("[Lobby] connection_failed")
-	lobby_error.emit("Couldn't reach the host. Leave and rejoin.")
-
-
+## Lobby chat needs no connection: everyone in the lobby can be reached.
 func get_connected_peer_count() -> int:
-	return multiplayer.get_peers().size() if multiplayer.has_multiplayer_peer() else 0
+	return maxi(members.size() - 1, 0)
 
 
-## Every other lobby member is a live RPC peer. The host must not be allowed to
-## Start until this is true, or clients load the board on a dead channel.
 func all_peers_connected() -> bool:
-	if not in_lobby or _peer == null:
-		return false
-	return get_connected_peer_count() >= maxi(members.size() - 1, 0)
+	return in_lobby
 
 
-func _on_server_disconnected() -> void:
-	push_warning("[Lobby] lost connection to the host")
-	var was_in_lobby := in_lobby
-	leave()
-	if was_in_lobby:
-		disconnected_unexpectedly.emit("Lost connection to the host.")
+## Steam picked a new owner (the host left): follow it.
+func _on_host_changed(new_host: int) -> void:
+	is_host = new_host == SteamManager.steam_id
+	_rebuild_members()
+	members_updated.emit()
 
 
 func _rebuild_members() -> void:
@@ -469,11 +398,19 @@ func _maybe_start() -> void:
 	var parsed: Variant = JSON.parse_string(raw)
 	if not (parsed is Dictionary) or not parsed.has("seats"):
 		return
-	_starting = true
+	var game_seed := int(parsed.get("seed", 0))
+	if game_seed == _done_seed or game_seed == _started_seed:
+		return # the round we just finished, or the one we're already in
 	var seat_map := {}
 	var names := {}
 	for key in parsed.seats:
 		seat_map[int(key)] = int(parsed.seats[key])
+	if not seat_map.has(SteamManager.steam_id):
+		lobby_error.emit("That game has already started.")
+		leave()
+		return
+	_starting = true
+	_started_seed = game_seed
 	for m in members:
 		names[m.steam_id] = m.name
-	game_starting.emit(seat_map, names, int(parsed.get("seed", 0)), player_count)
+	game_starting.emit(seat_map, names, game_seed, player_count)

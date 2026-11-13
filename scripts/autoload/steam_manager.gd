@@ -34,13 +34,24 @@ var stats_ready := false
 var _steam: Object = null
 
 
+## The Steam API everything else should call: the GodotSteam singleton, or a
+## local stand-in for multiplayer tests (`-- --fake-steam=<n>`, see
+## scripts/tests/fake_steam.gd). null when there's no Steam at all.
+func api() -> Object:
+	return _steam
+
+
 func _ready() -> void:
-	if not Engine.has_singleton("Steam"):
+	for a in OS.get_cmdline_user_args():
+		if str(a).begins_with("--fake-steam="):
+			_steam = load("res://scripts/tests/fake_steam.gd").new(int(str(a).get_slice("=", 1)))
+	if _steam == null and not Engine.has_singleton("Steam"):
 		push_warning("[Steam] GodotSteam extension not present - running standalone.")
 		steam_ready.emit(false)
 		return
 
-	_steam = Engine.get_singleton("Steam")
+	if _steam == null:
+		_steam = Engine.get_singleton("Steam")
 
 	var res: Dictionary = _steam.steamInitEx(APP_ID, false)
 	if int(res.get("status", 1)) != 0:
