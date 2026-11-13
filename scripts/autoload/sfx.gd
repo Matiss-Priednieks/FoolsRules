@@ -1,17 +1,5 @@
 extends Node
-## Autoload: every sound effect in the game goes through here - one voice pool,
-## shared by the menu, the Card Archive, the scene swipe and the table. (This
-## started life inside game.gd; it moved here so every screen sounds the same.)
-##
-## What plays when (user's mapping):
-##   deal()  - a card moving / being laid down (also the menu intro, a draft
-##             pick landing on the shelf)
-##   hover() - a fingertip on a card: the same click, quiet and pitched up
-##   click() - every button press (hooked automatically, see _on_node_added)
-##             and the countdown ticks
-##   fan()   - a pile moving, a panel opening; fan_long() - the scene swipe
-##   stamp() - the CLEARED stamp; fire() - cards burning
-## Frost / liquid effects have no sound yet.
+## Autoload: every sound effect in the game goes through here - one voice pool, shared by the menu, the Card Archive, the scene swipe and the table.
 
 const VOICES := 16
 const HOVER_GAP := 0.06 ## seconds - hovers closer than this are dropped, so a fast sweep doesn't machine-gun

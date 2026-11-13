@@ -1,12 +1,6 @@
 class_name CardInfo
 extends RefCounted
-## The card-style effect boxes for a special card, shared by the in-game hover
-## tooltip (game.gd) and the Card Archive close-up (archive.gd). They look like
-## scraps of the card, not UI: aged paper (paper_panel.gdshader), dark worn ink.
-## A dual card gets one box per half, told apart by shape and colour, not words:
-## attack is a slanted, forward-leaning box with a faded-red rim (a blade);
-## defence is an upright shield (square top, rounded bottom), thick slate rim.
-## Single-effect cards get one plain upright box.
+## The card-style effect boxes for a special card, shared by the in-game hover tooltip (game.gd) and the Card Archive close-up (archive.gd).
 
 const PAPER_PANEL := preload("res://shaders/paper_panel.gdshader")
 static var _paper_material: ShaderMaterial

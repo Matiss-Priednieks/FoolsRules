@@ -1,11 +1,5 @@
 extends SceneTree
 ## Headless fuzz test for the rules engine.
-##   godot --headless --script res://scripts/tests/test_durak.gd
-## Plays many random-legal games and checks that every one terminates, that
-## cards are conserved (pool_size() total, at every step), and that no bug
-## signatures show up. Cycles through a spread of player counts, since the
-## engine is meant to run 2..MAX_PLAYERS now (7+ deal from stacked decks, so
-## duplicate suit+rank is expected - only the total count is invariant).
 
 const GAMES := 3000
 ## Spec 4's reserve can add up to num_players * DRAFT_ROUNDS extra cards into

@@ -1,63 +1,6 @@
 class_name DurakGame
 extends RefCounted
-## Headless perevodnoy (podkidnoy) Durak. No rendering, no input, no AI.
-##
-## The view and the bots both drive it the same way:
-##   for action in game.get_all_legal_actions(): ...   # what can happen now
-##   game.apply_action(action)                          # do one of them
-##
-## Contract: the `card` inside an action must be the exact CardData instance
-## returned by get_legal_actions() (identity matters, hands hold references).
-##
-## The attacking side may lay down at most _attack_cap(defender) cards this bout
-## (default: the defender's whole hand size at bout start - no 6-card ceiling,
-## spec 3.6). Table-shape specials override the cap.
-##
-## Roguelike layer (spec 3.1, 9): special cards are ordinary ranked cards with a
-## CardData.special id. The engine stays vanilla unless `effects` is set; when
-## it is, _fire() dispatches the trigger-point events below to SpecialEffects,
-## and the _*_target / _*_cap / _can_play_* query hooks let a held or in-play
-## special change refill counts, attack caps, and play legality.
-##
-## Reserve (spec 4): each seat has a private magazine of specials, drafted one
-## at a time (draft_pick - pauses the whole table until every offer from the
-## round is claimed, spec 4.2's "simultaneous, all players at once") and drawn
-## into a hand only via refill, in place of a talon card: each refill draws the
-## oldest reserve card first, automatically (user-requested, replacing spec
-## 4.1's talon-or-reserve prompt). Reserve cards are manufactured on the spot,
-## not part of pool_size()'s count - a genuinely separate supply. Once the shared talon empties, a
-## seat's own reserve becomes their personal backup talon instead of also
-## drying up (a deliberate departure from spec 4.5, user-requested) - see
-## _generate_draft_offers()/_advance_refill()/_update_out().
-##
-## Curses (spec 5, Payload) are a second, deliberate departure: they are never
-## drafted at all (DRAFT_POOL is boons-only) and instead seeded straight into
-## the talon at deal time as environmental hazards nobody chose - see
-## _seed_talon_curses(). A drafted curse only ever pays off when an opponent
-## concedes a pile containing it; that payoff is too rare to justify the cost
-## a curse imposes the instant it's drawn, so offering one as a pick was never
-## a real choice, just a trap. Seeding keeps them a true swap against
-## pool_size()'s count (no extra cards enter circulation, spec 3.5's clock is
-## untouched) instead of the reserve's separate, additive supply.
-##
-## Known simplifications vs. full house rules:
-##   - a deflect cannot bounce back onto the original attacker
-##   - the draft pool offers every id SpecialEffects implements except Joker,
-##     which is excluded entirely, being rankless (spec 5) in an engine that
-##     can't represent that yet
-##   - a drafted card's rank is fixed to its catalogue rank_hint, not rolled -
-##     spec 3.1 ties power to rank, but the draft doesn't offer rank choice
-##   - refill-from-reserve is one swap-in per seat per round (spec 4.1 doesn't
-##     specify granularity), not a full per-card negotiation - a big hand
-##     isn't a wall of identical prompts
-##   - Rebound (spec 5, Deflect) returns the redirected attack to its thrower's
-##     hand rather than making them defend it in real time - a true "they must
-##     now beat it" would need a per-slot defender, which the engine's single
-##     `defender` field for the whole bout can't represent without a bigger
-##     rework than this card is worth on its own
-##   - Singleout (spec 5, Deflect) reassigns the whole bout's defender rather
-##     than just "this one attack" - same per-slot-defender limitation as
-##     Rebound above
+## The rules engine: headless perevodnoy (pass-on) Durak plus the special cards' hooks. No UI.
 
 signal state_changed
 signal game_over(loser: int)  # loser == -1 means everyone emptied at once (draw)

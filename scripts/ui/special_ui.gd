@@ -1,19 +1,6 @@
 class_name SpecialUI
 extends Control
-## What special cards show beyond the cards themselves, so nothing important
-## is ever just a line of text that fades:
-##   - the dossier: a peek (Mirror) opens a manila folder over the player you
-##     peeked at, the cards inside face-up. It stays until you click it, then
-##     its cards stay pinned to that player's plate as small "intel" chips
-##     for as long as they're still in that hand.
-##   - sealed folders: everyone else only sees a closed TOP SECRET folder over
-##     the target. That's the "only you saw it" language: open = yours,
-##     sealed = someone else's.
-##   - stamped tags on the seat plates for rules that linger (REFILL 7,
-##     MUZZLED NEXT, DEFENDS NEXT...) and table-wide notices by the talon.
-##   - ink_box(), the worn red stamp all of the above (and CLEARED) share.
-## Overlap: peeks from one action merge into one folder, folders queue rather
-## than stack, sealed folders on the same target fan out, tags wrap.
+## What special cards show beyond the cards: the Mirror dossier, sealed folders, plate tags and intel chips.
 
 const INK := Color(0.62, 0.1, 0.08)
 const MANILA := Color(0.77, 0.67, 0.47)

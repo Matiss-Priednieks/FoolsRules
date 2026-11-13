@@ -1,13 +1,5 @@
 extends HBoxContainer
-## One row in the lobby ROOM screen's member list: name, a seat picker, a Ready
-## toggle. A fresh instance is built per member on every render (see menu.gd), so
-## setup() connects signals unconditionally - there's never a stale connection to
-## guard against. The seat picker is an OptionButton so it scales from 2 up to
-## DurakGame.MAX_PLAYERS seats without the row growing unboundedly wide.
-##
-## Nodes are resolved inside setup() rather than via @onready: menu.gd calls
-## setup() straight after add_child(), and _ready() (hence @onready) hasn't
-## necessarily run yet when the caller is itself deep in a Steam callback.
+## One row in the lobby ROOM screen's member list: name, a seat picker, a Ready toggle.
 
 signal seat_picked(seat: int)
 signal ready_toggled(on: bool)

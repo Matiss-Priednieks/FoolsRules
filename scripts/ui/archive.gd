@@ -1,13 +1,5 @@
 extends Control
-## Card Archive: the whole deck and every special card up close, readable
-## before a game. Two tabs - The deck (all four suits 2..A plus the trump
-## finish and the card back) and Special cards (grouped by category). Hover lifts
-## and tilts a card like in play; click opens a close-up with its effect boxes.
-##
-## Built from what the game already has: card.tscn (+ its hover_follow), the
-## CardInfo effect boxes shared with the in-game tooltip, the theme's plate /
-## heading styles, the menu's background shader, CRT.warp for the mouse, and
-## Transition for leaving.
+## Card Archive: the whole deck and every special card up close, readable before a game.
 
 const CARD_SCENE := preload("res://scenes/card.tscn")
 const WORN_PANEL := preload("res://shaders/worn_panel.gdshader")

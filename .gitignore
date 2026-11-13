@@ -16,3 +16,6 @@ addons/godotsteam/linux32/
 addons/godotsteam/linuxarm64/
 addons/godotsteam/osx/
 addons/godotsteam/win32/
+
+# local design notes (moved out of the script headers)
+NOTES.md

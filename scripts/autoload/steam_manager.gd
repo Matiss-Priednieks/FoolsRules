@@ -1,20 +1,5 @@
 extends Node
-## Autoload singleton. Single entry point for everything Steam.
-##
-## The game must run BOTH standalone and through Steam, so nothing here may hard
-## depend on the GodotSteam extension being present. When the extension isn't
-## loaded / Steam isn't running, `available` stays false and every helper is a
-## safe no-op - the rest of the game is unchanged.
-##
-## All Steam calls go through the `_steam` singleton object fetched at runtime
-## (never the bare `Steam` identifier) so this script still parses if the
-## `addons/godotsteam/` folder is removed for a non-Steam build.
-##
-## GodotSteam GDExtension v4.22 (Godot 4.4+):
-##   steamInitEx(app_id, embed_callbacks) -> {status, verbal}   (status 0 == OK)
-##   requestUserStats(steam_id) -> fires `user_stats_received(game, result, user)`
-## This build's embedded callback loop doesn't fire, so we pump run_callbacks()
-## ourselves every frame.
+## Autoload: the single entry point for Steam; a safe no-op when Steam isn't there.
 
 ## Steam App ID. 480 = "Spacewar", Steam's public test app - use it until durak
 ## has a real App ID (needs the $100 Steam Direct fee). The same number must be in

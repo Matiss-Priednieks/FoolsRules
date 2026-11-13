@@ -1,12 +1,5 @@
 extends SceneTree
 ## The other half of fake_steam.gd: Steam's lobby service, played locally.
-##   godot --headless --path . --script res://scripts/tests/fake_steam_server.gd
-## Keeps lobbies (owner, members, lobby data, per-member data), relays lobby
-## chat to every member (the sender too, like Steam), and when the owner
-## leaves hands the lobby to the next member, like Steam does. A game
-## instance that disconnects counts as leaving. Quits on its own after
-## `-- --fake-steam-idle=<s>` seconds without any connected game (default 30).
-## Every ID on the wire is text: JSON numbers can't hold a Steam ID exactly.
 
 const PORT := 27999
 

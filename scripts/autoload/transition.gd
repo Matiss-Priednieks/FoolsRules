@@ -1,16 +1,5 @@
 extends CanvasLayer
-## Autoload: every scene change goes through Transition.change_scene(path) -
-## a torn-edge soot swipe (shaders/transition.gdshader) covers the screen, the
-## scene is swapped while it's covered, then the swipe carries on off the far
-## side. Layer 127: above the whole game and UI, just under the CRT autoload
-## (128), so the CRT curvature bends the swipe too. Blocks input while running.
-##
-## The cover holds for as long as the new scene actually needs - nothing is
-## timed for a particular machine. It waits until the scene says it's ready (a
-## `reveal_ready` property, if the scene has one - game.gd sets it after its
-## setup + shader warm-up) AND it's rendering smooth frames. If that takes a
-## noticeable moment, a LOADING stencil fades in on the cover; once ready it
-## fades fully away, and only then does the swipe carry on.
+## Autoload: every scene change goes through Transition.change_scene(path), behind a soot swipe.
 
 signal finished
 

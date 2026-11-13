@@ -1,10 +1,5 @@
 extends Node
-## Autoload. Steam-agnostic handoff between the menu and the board.
-##
-## The menu fills this in before switching to game.tscn; game.gd reads it in
-## _ready(). Singleplayer sets `active = false` and game.gd behaves exactly as
-## before. Nothing here knows about Steam, so the board stays decoupled from the
-## networking layer.
+## Autoload: who plays which seat, handed from the menu to the board (Steam-agnostic).
 
 var active := false                  ## true = launched from a multiplayer lobby
 var num_players := 4                  ## seat count for this game (2..DurakGame.MAX_PLAYERS)

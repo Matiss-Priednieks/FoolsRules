@@ -1,13 +1,6 @@
 class_name SpecialCards
 extends RefCounted
-## Catalogue of roguelike special cards (spec 5). Data only - no behaviour lives
-## here. SpecialEffects reads `trigger`/`dual` to know when to act; the draft /
-## reserve systems read `family` and `rank_hint` to build offers.
-##
-## A special is applied to an ordinary CardData by setting its `special` field to
-## one of these ids. Rank/suit/beats() are untouched (spec 3.1): a "boomerang 7"
-## is a 7 in every rules respect. (The name's just an example - Boomerang itself
-## is cut, see below.)
+## Catalogue of the special cards: names, families, triggers and rules text.
 
 ## The trigger point an effect hangs off, matched against DurakGame.Trigger.
 ## `while_held` effects have no event - they answer the query hooks

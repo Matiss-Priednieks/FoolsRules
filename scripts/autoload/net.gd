@@ -1,21 +1,5 @@
 extends Node
-## Autoload. The one pipe every multiplayer message goes through.
-##
-## Messages are plain Dictionaries with a "t" (type) key. game.gd never knows
-## how they travel; there are two carriers:
-##   STEAM - the Steam lobby's own chat channel (sendLobbyChatMsg). It goes
-##           through Steam's servers to every member: no direct connections,
-##           no handshake, no listen sockets, so nothing to time out, leak or
-##           get blocked by a router. If you're in the lobby, you can talk.
-##           (Replaced SteamMultiplayerPeer, which never released its socket
-##           and could hang on "connecting" forever.)
-##   LAN   - an ENet test transport between local instances (menu.gd's
-##           --lan-host / --lan-join). Messages go to this autoload's own
-##           RPC, and /root/Net exists in every instance from launch, so a
-##           message can't be lost to a scene that hasn't loaded yet.
-##
-## A sender is identified by a "key": a Steam ID (STEAM) or an ENet peer id
-## (LAN). NetSession maps keys to seats.
+## Autoload: the one pipe every multiplayer message goes through (Steam lobby chat, or LAN for local tests).
 
 enum Mode { OFF, STEAM, LAN }
 

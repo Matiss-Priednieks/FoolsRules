@@ -1,30 +1,6 @@
 class_name SpecialEffects
 extends RefCounted
-## The one place special-card behaviour lives (spec 9: "data, not code" for the
-## catalogue; this is the code the data points at). Assign an instance to
-## DurakGame.effects to switch the roguelike layer on.
-##
-## Contract:
-##   handle(id, card, trigger, game, ctx)  - event triggers. `trigger` is a
-##       DurakGame.Trigger value; `ctx` shape is documented on the enum. `card`
-##       is the specific CardData instance that fired this - needed to tell a
-##       dual-mode card's two roles apart (spec 3.8) when ctx doesn't already
-##       imply the role (ON_DEFENSE_SUCCESS names both `attacks` and `defenses`
-##       since both roles fire on the same event; ON_THROW_IN/ON_DEFENSE_PLAYED
-##       each only ever mean one role, so `trigger` alone tells them apart).
-##   refill_target(seat, game, base) - "while held" query: return the number of
-##       cards `seat` should refill to (default `base`, = DurakGame.HAND_SIZE).
-##   attack_cap(defender, game, base) - "while held" query: return the max cards
-##       the attacking side may lay down this bout (default `base`, = the
-##       defender's hand size).
-##   can_play_attack(card, is_lead, game) / can_play_defense(card, game) -
-##       legality queries: may `card` be played as an attack/throw-in (lead or
-##       not) or as a defence right now? Default true; Deadweight is the only
-##       current user.
-##
-## Effects that use randomness MUST go through `game._rng`, never global random -
-## multiplayer replays the same action stream on every peer and would desync
-## otherwise.
+## The one place special-card behaviour lives (spec 9: "data, not code" for the catalogue; this is the code the data points at).
 
 ## Set true to trace every fired trigger to the console while wiring effects up.
 const TRACE := false

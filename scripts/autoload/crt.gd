@@ -1,12 +1,5 @@
 extends CanvasLayer
-## Autoload: the CRT screen (shaders/crt.gdshader) over the whole game - menu,
-## scene-change swipe and table alike - so the "old TV" never switches on or off
-## between scenes. Layer 128: above everything else, swipe (127) included.
-##
-## It also owns the matching input fix: the shader bends the picture but raw
-## mouse input isn't bent, so every mouse event is re-sent through the same
-## warp before anything else (GUI included) acts on it, and warp() maps any
-## other screen point (game.gd's _mouse()) the same way.
+## Autoload: the CRT screen effect over the whole game, plus the matching mouse warp.
 
 @export var enabled := true:
 	set(value):

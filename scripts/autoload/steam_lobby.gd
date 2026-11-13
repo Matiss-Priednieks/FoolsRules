@@ -1,15 +1,5 @@
 extends Node
-## Autoload. Steam lobby lifecycle for multiplayer Durak.
-##
-## Milestone 1 = lobby plumbing only: host / browse / join / leave, a member
-## list with per-seat + ready state carried in Steam lobby member-data, and a
-## host-triggered "start" that hands every member the same seat map. No gameplay
-## action sync yet - that's the next milestone.
-##
-## Everything gates on SteamManager.available; with no Steam the methods emit
-## `lobby_error` and change nothing. All Steam calls go through the `_steam`
-## singleton fetched at runtime (never the bare `Steam` identifier) so this file
-## still parses without the GodotSteam extension.
+## Autoload: Steam lobby lifecycle - host, browse, join, seats and ready-ups, start, back to the room.
 
 const MAX_PLAYERS := DurakGame.MAX_PLAYERS  # 24
 const DEFAULT_PLAYERS := 4

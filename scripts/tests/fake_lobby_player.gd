@@ -1,14 +1,5 @@
 extends SceneTree
-## One player in a fake-Steam lobby test (see fake_steam.gd). Runs the real
-## lobby flow - host or join by invite code, pick a seat, ready up, start -
-## then the real game, headless, auto-playing its own seat.
-##   -- --fake-steam=<n> --role=host|join|rejoin --seat=<k> [--players=<p>]
-##      --code-file=<path> [--lan-quit-after=<moves>] [--kick-seat=<k>]
-##      [--churn=<times>]   leave and rejoin the lobby this many times first
-##      [--stop-in-game]    quit as soon as our board is dealt (lobby stress)
-## The host writes the invite code to --code-file; joiners read it from there.
-## "rejoin" joins a lobby whose match is already running (a dropped player
-## coming back in with the code).
+## One player in a fake-Steam lobby test (see fake_steam.gd).
 
 var _args := {}
 

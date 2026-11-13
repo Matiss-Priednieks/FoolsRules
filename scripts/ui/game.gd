@@ -1,10 +1,5 @@
 extends Node2D
-## The playable board. Seat `human_seat` is the user (Slay-the-Spire style drag);
-## the other seats are driven by Bot. Rendering is identity-based: every card owns
-## one persistent Sprite2D kept in `_card_views` (keyed by its CardData). On each
-## rules change the views tween to their new positions, so pickups, refills and
-## finished bouts stay followable. Hidden zones (opponent hands, the talon body,
-## the discard pile) are drawn as pools of face-down "back" sprites.
+## The playable board.
 
 const CARD_SCENE := preload("res://scenes/card.tscn")
 const SUIT_GLYPHS := ["♣", "♦", "♥", "♠"]

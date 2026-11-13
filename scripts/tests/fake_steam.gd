@@ -1,12 +1,5 @@
 extends Node
-## Test double for the GodotSteam singleton: just the lobby part of Steam,
-## talking to fake_steam_server.gd over localhost instead of Steam's servers.
-## Launch the game with `-- --fake-steam=<n>` and SteamManager hands this to
-## everything instead of the real thing, as account n. Same method names,
-## same signals, same callback timing (fired from run_callbacks()), so
-## steam_lobby.gd and net.gd run unchanged - several instances on one machine
-## can then host, join, chat, leave and take over lobbies like real players.
-## Not a Steam emulator: no overlay, stats or friends (those are no-ops).
+## Test double for the GodotSteam singleton: just the lobby part of Steam, talking to fake_steam_server.gd over localhost instead of Steam's servers.
 
 signal lobby_created(result: int, lobby_id: int)
 signal lobby_joined(lobby_id: int, permissions: int, locked: bool, response: int)
